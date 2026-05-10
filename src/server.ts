@@ -1,0 +1,384 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import * as z from "zod/v4";
+
+import {
+  Doc2xClient,
+  Doc2xHttpError,
+  summarizeResponse,
+  type PayOperation,
+  type SpaceOperation,
+  type TaskOperation,
+  type UserGatewayOperation,
+  type UtilGatewayOperation
+} from "./doc2x/client.js";
+import {
+  OBSERVED_CAPABILITIES,
+  OBSERVED_ROUTES,
+  PAY_GATEWAY_METHODS,
+  REST_ENDPOINTS,
+  SPACE_GATEWAY_METHODS,
+  TASK_GATEWAY_METHODS,
+  USER_GATEWAY_METHODS,
+  UTIL_GATEWAY_METHODS,
+  V2C_ENDPOINTS
+} from "./doc2x/endpoints.js";
+import { getBrowserFallbackPlan } from "./doc2x/browserFallback.js";
+import { safeJsonStringify } from "./utils/json.js";
+
+const stringMapSchema = z.record(z.string(), z.string());
+const payloadSchema = z.record(z.string(), z.any());
+
+const taskOperationValues = Object.keys(TASK_GATEWAY_METHODS) as [TaskOperation, ...TaskOperation[]];
+const spaceOperationValues = Object.keys(SPACE_GATEWAY_METHODS) as [SpaceOperation, ...SpaceOperation[]];
+const payOperationValues = Object.keys(PAY_GATEWAY_METHODS) as [PayOperation, ...PayOperation[]];
+const userGatewayOperationValues = Object.keys(USER_GATEWAY_METHODS) as [
+  UserGatewayOperation,
+  ...UserGatewayOperation[]
+];
+const utilGatewayOperationValues = Object.keys(UTIL_GATEWAY_METHODS) as [
+  UtilGatewayOperation,
+  ...UtilGatewayOperation[]
+];
+
+function textResult(title: string, value: unknown, isError = false) {
+  return {
+    isError,
+    content: [
+      {
+        type: "text" as const,
+        text: `${title}\n\n${safeJsonStringify(value)}`
+      }
+    ]
+  };
+}
+
+function formatError(error: unknown): Record<string, unknown> {
+  if (error instanceof Doc2xHttpError) {
+    return {
+      name: error.name,
+      message: error.message,
+      response: error.response
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    };
+  }
+
+  return {
+    message: "Unknown error",
+    detail: error
+  };
+}
+
+async function withToolErrorHandling<T>(
+  title: string,
+  task: () => Promise<T>
+): Promise<ReturnType<typeof textResult>> {
+  try {
+    const value = await task();
+    return textResult(title, value);
+  } catch (error) {
+    return textResult(`${title} failed`, formatError(error), true);
+  }
+}
+
+export function createServer(client = new Doc2xClient()): McpServer {
+  const server = new McpServer({
+    name: "doc2x-subscription-mcp",
+    version: "0.1.0"
+  });
+
+  server.registerTool(
+    "doc2x_surface_catalog",
+    {
+      description:
+        "Return the observed Doc2X web routes, endpoint families, and capability surface recovered from the public site bundles.",
+      inputSchema: {
+        includeRestEndpoints: z.boolean().optional(),
+        includeGatewayEndpoints: z.boolean().optional(),
+        includeV2cEndpoints: z.boolean().optional()
+      }
+    },
+    async ({
+      includeGatewayEndpoints = true,
+      includeRestEndpoints = true,
+      includeV2cEndpoints = true
+    }) =>
+      withToolErrorHandling("Doc2X surface catalog", async () => ({
+        routes: OBSERVED_ROUTES,
+        capabilities: OBSERVED_CAPABILITIES,
+        restEndpoints: includeRestEndpoints ? REST_ENDPOINTS : undefined,
+        gatewayEndpoints: includeGatewayEndpoints
+          ? {
+              task: TASK_GATEWAY_METHODS,
+              space: SPACE_GATEWAY_METHODS,
+              pay: PAY_GATEWAY_METHODS,
+              user: USER_GATEWAY_METHODS,
+              util: UTIL_GATEWAY_METHODS
+            }
+          : undefined,
+        v2cEndpoints: includeV2cEndpoints ? V2C_ENDPOINTS : undefined
+      }))
+  );
+
+  server.registerTool(
+    "doc2x_session_get",
+    {
+      description: "Show the currently persisted Doc2X session summary, including cookie count and default headers."
+    },
+    async () =>
+      withToolErrorHandling("Doc2X session summary", async () => {
+        return client.getSessionSummary();
+      })
+  );
+
+  server.registerTool(
+    "doc2x_session_set",
+    {
+      description:
+        "Import or update a Doc2X session using cookie header text, bearer token, and extra default headers.",
+      inputSchema: {
+        cookieHeader: z.string().optional(),
+        bearerToken: z.string().optional(),
+        defaultHeaders: stringMapSchema.optional(),
+        clearExisting: z.boolean().optional(),
+        notes: z.string().optional()
+      }
+    },
+    async ({ cookieHeader, bearerToken, defaultHeaders, clearExisting, notes }) =>
+      withToolErrorHandling("Doc2X session updated", async () => {
+        return client.setSession({
+          cookieHeader,
+          bearerToken,
+          defaultHeaders,
+          clearExisting,
+          notes
+        });
+      })
+  );
+
+  server.registerTool(
+    "doc2x_session_clear",
+    {
+      description: "Remove the persisted Doc2X session from local storage."
+    },
+    async () =>
+      withToolErrorHandling("Doc2X session cleared", async () => {
+        await client.clearSession();
+        return { cleared: true };
+      })
+  );
+
+  server.registerTool(
+    "doc2x_login_password",
+    {
+      description:
+        "Attempt Doc2X password login through the observed web endpoint. This may still fail if the account is captcha-gated.",
+      inputSchema: {
+        phone: z.string(),
+        password: z.string(),
+        inviteCode: z.string().optional()
+      }
+    },
+    async ({ phone, password, inviteCode }) =>
+      withToolErrorHandling("Doc2X password login", async () => {
+        const response = await client.loginWithPassword({
+          phone,
+          password,
+          inviteCode
+        });
+        return summarizeResponse(response);
+      })
+  );
+
+  server.registerTool(
+    "doc2x_login_code",
+    {
+      description:
+        "Attempt Doc2X SMS-code login through the observed web endpoint. This may still need captcha or verification headers.",
+      inputSchema: {
+        phone: z.string(),
+        code: z.string(),
+        inviteCode: z.string().optional()
+      }
+    },
+    async ({ phone, code, inviteCode }) =>
+      withToolErrorHandling("Doc2X code login", async () => {
+        const response = await client.loginWithCode({
+          phone,
+          code,
+          inviteCode
+        });
+        return summarizeResponse(response);
+      })
+  );
+
+  server.registerTool(
+    "doc2x_send_sms_code",
+    {
+      description:
+        "Request an SMS code from Doc2X. Real success may still depend on captcha or server-side verification.",
+      inputSchema: {
+        phone: z.string(),
+        purpose: z.string().optional()
+      }
+    },
+    async ({ phone, purpose }) =>
+      withToolErrorHandling("Doc2X send SMS code", async () => {
+        const response = await client.sendSmsCode({
+          phone,
+          purpose
+        });
+        return summarizeResponse(response);
+      })
+  );
+
+  server.registerTool(
+    "doc2x_get_account_bundle",
+    {
+      description:
+        "Fetch profile, quota, subscription, and product list in one call using the web subscription session."
+    },
+    async () =>
+      withToolErrorHandling("Doc2X account bundle", async () => {
+        const bundle = await client.getAccountBundle();
+        return Object.fromEntries(
+          Object.entries(bundle).map(([key, value]) => [key, summarizeResponse(value)])
+        );
+      })
+  );
+
+  server.registerTool(
+    "doc2x_create_task",
+    {
+      description:
+        "Call an observed TaskService creation or validation endpoint, such as parse, translate, upload, or image-edit task creation.",
+      inputSchema: {
+        operation: z.enum(taskOperationValues),
+        payload: payloadSchema
+      }
+    },
+    async ({ operation, payload }) =>
+      withToolErrorHandling(`Doc2X task operation ${operation}`, async () => {
+        const response = await client.taskOperation(operation, payload);
+        return summarizeResponse(response);
+      })
+  );
+
+  server.registerTool(
+    "doc2x_space_operation",
+    {
+      description:
+        "Call an observed SpaceService endpoint to list parse/translate objects, inspect results, or update space objects.",
+      inputSchema: {
+        operation: z.enum(spaceOperationValues),
+        payload: payloadSchema
+      }
+    },
+    async ({ operation, payload }) =>
+      withToolErrorHandling(`Doc2X space operation ${operation}`, async () => {
+        const response = await client.spaceOperation(operation, payload);
+        return summarizeResponse(response);
+      })
+  );
+
+  server.registerTool(
+    "doc2x_pay_operation",
+    {
+      description:
+        "Call observed billing, refund, points-transform, or invoice endpoints from the Doc2X payment surface.",
+      inputSchema: {
+        operation: z.enum(payOperationValues),
+        payload: payloadSchema
+      }
+    },
+    async ({ operation, payload }) =>
+      withToolErrorHandling(`Doc2X pay operation ${operation}`, async () => {
+        const response = await client.payOperation(operation, payload);
+        return summarizeResponse(response);
+      })
+  );
+
+  server.registerTool(
+    "doc2x_user_gateway_operation",
+    {
+      description:
+        "Call observed gateway user operations such as OAuth login, phone binding change checks, WeChat unbind, or unregister actions.",
+      inputSchema: {
+        operation: z.enum(userGatewayOperationValues),
+        payload: payloadSchema
+      }
+    },
+    async ({ operation, payload }) =>
+      withToolErrorHandling(`Doc2X user gateway operation ${operation}`, async () => {
+        const response = await client.userGatewayOperation(operation, payload);
+        return summarizeResponse(response);
+      })
+  );
+
+  server.registerTool(
+    "doc2x_util_operation",
+    {
+      description:
+        "Call observed utility endpoints such as changelogs, announcements, or transfer-record related methods.",
+      inputSchema: {
+        operation: z.enum(utilGatewayOperationValues),
+        payload: payloadSchema
+      }
+    },
+    async ({ operation, payload }) =>
+      withToolErrorHandling(`Doc2X util operation ${operation}`, async () => {
+        const response = await client.utilGatewayOperation(operation, payload);
+        return summarizeResponse(response);
+      })
+  );
+
+  server.registerTool(
+    "doc2x_request",
+    {
+      description:
+        "Make a raw Doc2X HTTP request. Use this for uncovered REST, gateway, v2c, or upload flows once you know the real payload shape.",
+      inputSchema: {
+        target: z.enum(["web", "v2c", "absolute"]).optional(),
+        path: z.string().optional(),
+        absoluteUrl: z.string().optional(),
+        method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(),
+        payload: payloadSchema.optional(),
+        bodyText: z.string().optional(),
+        headers: stringMapSchema.optional(),
+        responseType: z.enum(["auto", "json", "text", "base64"]).optional(),
+        filePath: z.string().optional(),
+        fileFieldName: z.string().optional(),
+        fileContentType: z.string().optional(),
+        formFields: stringMapSchema.optional()
+      }
+    },
+    async (input) =>
+      withToolErrorHandling("Doc2X raw request", async () => {
+        const response = await client.request(input);
+        return summarizeResponse(response);
+      })
+  );
+
+  server.registerTool(
+    "doc2x_browser_fallback_plan",
+    {
+      description:
+        "Explain whether a Doc2X flow is better handled by HTTP only, browser only, or a mixed approach.",
+      inputSchema: {
+        flow: z.string()
+      }
+    },
+    async ({ flow }) =>
+      withToolErrorHandling("Doc2X browser fallback plan", async () => {
+        return getBrowserFallbackPlan(flow);
+      })
+  );
+
+  return server;
+}

@@ -1,0 +1,22 @@
+{
+  "name": "doc2x-subscription-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HTTP-first MCP server for Doc2X web subscription workflows with browser fallback hooks.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

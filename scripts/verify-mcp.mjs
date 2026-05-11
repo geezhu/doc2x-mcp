@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
@@ -12,7 +13,8 @@ const REQUIRED_TOOLS = [
   "doc2x_browser_fallback_plan",
   "doc2x_request",
   "doc2x_parse_pdf",
-  "doc2x_get_parse_status"
+  "doc2x_get_parse_status",
+  "doc2x_get_parse_markdown"
 ];
 
 function parseArgs(argv) {
@@ -156,6 +158,29 @@ async function main() {
         });
         assert.equal(statusResult.ok, true, "status tool should succeed");
         assert.equal(statusResult.status, "success", "status tool should report success");
+
+        const markdownOutputPath = "/tmp/doc2x-verify-output.md";
+        await rm(markdownOutputPath, {
+          force: true
+        });
+        const markdownResult = await callJsonTool(client, "doc2x_get_parse_markdown", {
+          taskId: parseResult.taskId,
+          outputPath: markdownOutputPath
+        });
+        assert.equal(markdownResult.ok, true, "markdown tool should succeed");
+        assert.equal(markdownResult.status, "success", "markdown tool should report success");
+        assert.equal(typeof markdownResult.markdown, "string", "markdown tool should return markdown text");
+        assert.ok(markdownResult.markdown.length > 0, "markdown text should not be empty");
+        const pages = getArray(markdownResult.pages, "markdown pages");
+        assert.ok(pages.length > 0, "markdown pages should not be empty");
+        assert.equal(markdownResult.wroteFile, true, "markdown tool should write the output file");
+        assert.equal(markdownResult.outputPath, markdownOutputPath, "markdown tool should echo outputPath");
+        const writtenMarkdown = await readFile(markdownOutputPath, "utf8");
+        assert.equal(
+          writtenMarkdown,
+          markdownResult.markdown,
+          "written markdown should match returned markdown exactly"
+        );
       } else {
         logStep("Skipping online parse check because no --pdf argument was provided");
       }

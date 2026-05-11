@@ -49,6 +49,11 @@ export interface RequestOptions {
   fileFieldName?: string;
   fileContentType?: string;
   formFields?: Record<string, string>;
+  includeSessionAuth?: boolean;
+  includeSessionCookies?: boolean;
+  allowRefresh?: boolean;
+  originOverride?: string | null;
+  refererOverride?: string | null;
 }
 
 export interface ResponseSnapshot {

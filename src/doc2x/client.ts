@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { CookieJar } from "./cookies.js";
 import {
+  DOC2X_V2C_DEFAULT_HEADERS,
   DOC2X_V2C_ORIGIN,
   DOC2X_WEB_ORIGIN,
   PAY_GATEWAY_METHODS,
@@ -16,6 +17,7 @@ import { SessionStore } from "./session.js";
 import type {
   RequestOptions,
   ResponseSnapshot,
+  SessionState,
   SessionSummary,
   StoredCookie
 } from "./types.js";
@@ -49,6 +51,53 @@ function getRequestOrigin(url: URL): string {
 function getRequestReferer(url: URL): string {
   const origin = getRequestOrigin(url);
   return `${origin}/`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function getStringCandidate(source: Record<string, unknown> | undefined, keys: string[]): string | undefined {
+  if (!source) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function extractRefreshedTokens(body: unknown): {
+  bearerToken?: string;
+  refreshToken?: string;
+} | undefined {
+  const root = asRecord(body);
+  const nestedData = asRecord(root?.data);
+  const token =
+    getStringCandidate(nestedData, ["token", "accessToken", "bearerToken"]) ??
+    getStringCandidate(root, ["token", "accessToken", "bearerToken"]);
+
+  const refreshToken =
+    getStringCandidate(nestedData, ["refreshToken", "refresh_token"]) ??
+    getStringCandidate(root, ["refreshToken", "refresh_token"]);
+
+  if (!token && !refreshToken) {
+    return undefined;
+  }
+
+  return {
+    bearerToken: token,
+    refreshToken
+  };
 }
 
 async function createRequestBody(options: RequestOptions): Promise<{
@@ -141,6 +190,7 @@ export class Doc2xClient {
   private readonly sessionStore: SessionStore;
   private readonly cookieJar = new CookieJar();
   private initialized = false;
+  private refreshPromise?: Promise<boolean>;
 
   constructor(sessionStore = new SessionStore()) {
     this.sessionStore = sessionStore;
@@ -232,46 +282,43 @@ export class Doc2xClient {
   async request(options: RequestOptions): Promise<ResponseSnapshot> {
     await this.init();
 
-    const target = options.target ?? "web";
-    const url = this.resolveUrl(target, options.path, options.absoluteUrl);
-    const session = this.sessionStore.getState();
-    const method = (options.method ?? (options.payload !== undefined || options.bodyText !== undefined || options.filePath ? "POST" : "GET")).toUpperCase();
-    const { body, headers } = await createRequestBody(options);
+    return this.requestWithRetry(options, options.allowRefresh !== false);
+  }
 
-    const requestHeaders = new Headers({
-      Accept: "application/json, text/plain, */*",
-      "User-Agent": "doc2x-subscription-mcp/0.1.0",
-      Origin: getRequestOrigin(url),
-      Referer: getRequestReferer(url),
-      ...session.defaultHeaders,
-      ...headers
-    });
+  async refreshSession(): Promise<boolean> {
+    await this.init();
 
-    if (session.bearerToken && !requestHeaders.has("Authorization")) {
-      requestHeaders.set("Authorization", `Bearer ${session.bearerToken}`);
+    if (this.refreshPromise) {
+      return this.refreshPromise;
     }
 
-    const cookieHeader = this.cookieJar.getCookieHeader(url);
-    if (cookieHeader) {
-      requestHeaders.set("Cookie", cookieHeader);
+    this.refreshPromise = this.performRefreshSession();
+    try {
+      return await this.refreshPromise;
+    } finally {
+      this.refreshPromise = undefined;
     }
+  }
 
-    const response = await fetch(url, {
-      method,
-      headers: requestHeaders,
-      body
-    });
+  private async requestWithRetry(
+    options: RequestOptions,
+    allowRefreshRetry: boolean
+  ): Promise<ResponseSnapshot> {
+    const response = await this.performRequest(options);
 
-    const setCookieHeaders = getSetCookieHeaders(response.headers);
-    if (setCookieHeaders.length > 0) {
-      this.cookieJar.ingestSetCookieHeaders(setCookieHeaders, url);
-      await this.sessionStore.overwrite({
-        bearerToken: session.bearerToken,
-        refreshToken: session.refreshToken,
-        defaultHeaders: session.defaultHeaders,
-        cookies: this.cookieJar.toJSON(),
-        notes: session.notes
-      });
+    if (
+      response.status === 401 &&
+      allowRefreshRetry &&
+      options.allowRefresh !== false &&
+      (await this.refreshSession())
+    ) {
+      return this.requestWithRetry(
+        {
+          ...options,
+          allowRefresh: false
+        },
+        false
+      );
     }
 
     const snapshot: ResponseSnapshot = {
@@ -288,6 +335,54 @@ export class Doc2xClient {
     }
 
     return snapshot;
+  }
+
+  private async performRequest(options: RequestOptions): Promise<Response> {
+    await this.init();
+
+    const target = options.target ?? "web";
+    const url = this.resolveUrl(target, options.path, options.absoluteUrl);
+    const session = this.sessionStore.getState();
+    const method = (options.method ?? (options.payload !== undefined || options.bodyText !== undefined || options.filePath ? "POST" : "GET")).toUpperCase();
+    const { body, headers } = await createRequestBody(options);
+    const defaultHeaders = target === "v2c" ? DOC2X_V2C_DEFAULT_HEADERS : undefined;
+    const originHeader = options.originOverride === null ? undefined : options.originOverride ?? getRequestOrigin(url);
+    const refererHeader =
+      options.refererOverride === null ? undefined : options.refererOverride ?? getRequestReferer(url);
+
+    const requestHeaders = new Headers({
+      Accept: "application/json, text/plain, */*",
+      "User-Agent": "doc2x-subscription-mcp/0.1.0",
+      ...(originHeader ? { Origin: originHeader } : {}),
+      ...(refererHeader ? { Referer: refererHeader } : {}),
+      ...defaultHeaders,
+      ...session.defaultHeaders,
+      ...headers
+    });
+
+    if (options.includeSessionAuth !== false && session.bearerToken && !requestHeaders.has("Authorization")) {
+      requestHeaders.set("Authorization", `Bearer ${session.bearerToken}`);
+    }
+
+    const cookieHeader =
+      options.includeSessionCookies === false ? undefined : this.cookieJar.getCookieHeader(url);
+    if (cookieHeader && !requestHeaders.has("Cookie")) {
+      requestHeaders.set("Cookie", cookieHeader);
+    }
+
+    const response = await fetch(url, {
+      method,
+      headers: requestHeaders,
+      body
+    });
+
+    const setCookieHeaders = getSetCookieHeaders(response.headers);
+    if (setCookieHeaders.length > 0) {
+      this.cookieJar.ingestSetCookieHeaders(setCookieHeaders, url);
+      await this.persistSessionState(session);
+    }
+
+    return response;
   }
 
   async loginWithPassword(payload: Record<string, unknown>): Promise<ResponseSnapshot> {
@@ -414,6 +509,53 @@ export class Doc2xClient {
       path: UTIL_GATEWAY_METHODS[operation],
       target: "v2c",
       payload
+    });
+  }
+
+  private async performRefreshSession(): Promise<boolean> {
+    const session = this.sessionStore.getState();
+    if (!session.refreshToken) {
+      return false;
+    }
+
+    try {
+      const response = await this.request({
+        method: REST_ENDPOINTS.refreshToken.method,
+        path: REST_ENDPOINTS.refreshToken.path,
+        target: REST_ENDPOINTS.refreshToken.target,
+        headers: {
+          Authorization: `Bearer ${session.refreshToken}`
+        },
+        includeSessionAuth: false,
+        allowRefresh: false
+      });
+
+      const refreshedTokens = extractRefreshedTokens(response.body);
+      if (!refreshedTokens?.bearerToken) {
+        return false;
+      }
+
+      await this.sessionStore.overwrite({
+        bearerToken: refreshedTokens.bearerToken,
+        refreshToken: refreshedTokens.refreshToken ?? session.refreshToken,
+        defaultHeaders: session.defaultHeaders,
+        cookies: this.cookieJar.toJSON(),
+        notes: session.notes
+      });
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async persistSessionState(session: SessionState): Promise<void> {
+    await this.sessionStore.overwrite({
+      bearerToken: session.bearerToken,
+      refreshToken: session.refreshToken,
+      defaultHeaders: session.defaultHeaders,
+      cookies: this.cookieJar.toJSON(),
+      notes: session.notes
     });
   }
 

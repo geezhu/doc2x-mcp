@@ -2,6 +2,10 @@ import type { BrowserFallbackPlan } from "./types.js";
 
 export const DOC2X_WEB_ORIGIN = "https://doc2x.noedgeai.com";
 export const DOC2X_V2C_ORIGIN = "https://v2c.doc2x.noedgeai.com";
+export const DOC2X_V2C_DEFAULT_HEADERS = {
+  "x-doc2x-api-version": "2025-06-04",
+  "x-doc2x-error-format": "v2"
+} as const;
 
 export const OBSERVED_ROUTES = [
   "/",
@@ -51,7 +55,7 @@ export const REST_ENDPOINTS = {
   loginWithPassword: { method: "POST", path: "/user/login/password", target: "web" },
   logout: { method: "POST", path: "/user/logout", target: "web" },
   sendSmsCode: { method: "POST", path: "/user/smscode", target: "web" },
-  refreshToken: { method: "POST", path: "/user/token/refresh", target: "web" },
+  refreshToken: { method: "GET", path: "/user/token/refresh", target: "web" },
   profile: { method: "GET", path: "/v2/user/profile", target: "v2c" },
   quota: { method: "GET", path: "/v2/user/quota", target: "v2c" },
   subscription: { method: "GET", path: "/v2/user/subscription", target: "v2c" },

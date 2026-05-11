@@ -11,6 +11,7 @@ import {
   type UserGatewayOperation,
   type UtilGatewayOperation
 } from "./doc2x/client.js";
+import { authenticateViaManagedBrowser } from "./doc2x/browserAuth.js";
 import {
   OBSERVED_CAPABILITIES,
   OBSERVED_ROUTES,
@@ -133,6 +134,31 @@ export function createServer(client = new Doc2xClient()): McpServer {
           : undefined,
         v2cEndpoints: includeV2cEndpoints ? V2C_ENDPOINTS : undefined
       }))
+  );
+
+  server.registerTool(
+    "doc2x_auth_browser",
+    {
+      description:
+        "Authenticate Doc2X through a managed Chrome/Chromium profile in one step: silently reuse an existing managed profile when possible, otherwise open a browser for manual login and automatically import the resulting session.",
+      inputSchema: {
+        timeoutMs: z.number().int().positive().optional(),
+        executablePath: z.string().optional(),
+        profileDir: z.string().optional(),
+        debugPort: z.number().int().positive().optional(),
+        notes: z.string().optional()
+      }
+    },
+    async ({ timeoutMs, executablePath, profileDir, debugPort, notes }) =>
+      withToolErrorHandling("Doc2X browser auth", async () => {
+        return authenticateViaManagedBrowser(client, {
+          timeoutMs,
+          executablePath,
+          profileDir,
+          debugPort,
+          notes
+        });
+      })
   );
 
   server.registerTool(

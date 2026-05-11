@@ -35,6 +35,7 @@ export class SessionStore {
         version: SESSION_VERSION,
         updatedAt: parsed.updatedAt ?? new Date(0).toISOString(),
         bearerToken: parsed.bearerToken,
+        refreshToken: parsed.refreshToken,
         defaultHeaders: parsed.defaultHeaders ?? {},
         cookies: parsed.cookies ?? [],
         notes: parsed.notes
@@ -54,6 +55,7 @@ export class SessionStore {
   getSummary(): SessionSummary {
     return {
       hasBearerToken: Boolean(this.state.bearerToken),
+      hasRefreshToken: Boolean(this.state.refreshToken),
       defaultHeaders: this.state.defaultHeaders,
       cookieCount: this.state.cookies.length,
       cookieDomains: [...new Set(this.state.cookies.map((cookie) => cookie.domain))].sort(),
@@ -67,6 +69,7 @@ export class SessionStore {
       version: SESSION_VERSION,
       updatedAt: new Date().toISOString(),
       bearerToken: nextState.bearerToken,
+      refreshToken: nextState.refreshToken,
       defaultHeaders: nextState.defaultHeaders,
       cookies: nextState.cookies,
       notes: nextState.notes

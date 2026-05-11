@@ -22,6 +22,7 @@ import {
   UTIL_GATEWAY_METHODS,
   V2C_ENDPOINTS
 } from "./doc2x/endpoints.js";
+import { importBrowserSession } from "./doc2x/browserSession.js";
 import { getBrowserFallbackPlan } from "./doc2x/browserFallback.js";
 import { safeJsonStringify } from "./utils/json.js";
 
@@ -145,20 +146,73 @@ export function createServer(client = new Doc2xClient()): McpServer {
       inputSchema: {
         cookieHeader: z.string().optional(),
         bearerToken: z.string().optional(),
+        refreshToken: z.string().optional(),
         defaultHeaders: stringMapSchema.optional(),
         clearExisting: z.boolean().optional(),
         notes: z.string().optional()
       }
     },
-    async ({ cookieHeader, bearerToken, defaultHeaders, clearExisting, notes }) =>
+    async ({ cookieHeader, bearerToken, refreshToken, defaultHeaders, clearExisting, notes }) =>
       withToolErrorHandling("Doc2X session updated", async () => {
         return client.setSession({
           cookieHeader,
           bearerToken,
+          refreshToken,
           defaultHeaders,
           clearExisting,
           notes
         });
+      })
+  );
+
+  server.registerTool(
+    "doc2x_import_browser_session",
+    {
+      description:
+        "Import the current Doc2X login session from a Chrome/Chromium instance exposed over the DevTools remote debugging protocol.",
+      inputSchema: {
+        debugBaseUrl: z.string().optional(),
+        preferPageUrl: z.string().optional(),
+        persist: z.boolean().optional(),
+        clearExisting: z.boolean().optional(),
+        notes: z.string().optional()
+      }
+    },
+    async ({ debugBaseUrl, preferPageUrl, persist = true, clearExisting = true, notes }) =>
+      withToolErrorHandling("Doc2X browser session import", async () => {
+        const imported = await importBrowserSession({
+          debugBaseUrl,
+          preferPageUrl
+        });
+
+        const sessionSummary = persist
+          ? await client.setSession({
+              bearerToken: imported.bearerToken,
+              refreshToken: imported.refreshToken,
+              cookies: imported.cookies,
+              defaultHeaders: imported.defaultHeaders,
+              clearExisting,
+              notes
+            })
+          : undefined;
+
+        return {
+          debugBaseUrl: imported.debugBaseUrl,
+          pageTargetId: imported.pageTargetId,
+          pageUrl: imported.pageUrl,
+          captured: {
+            hasBearerToken: Boolean(imported.bearerToken),
+            hasRefreshToken: Boolean(imported.refreshToken),
+            defaultHeaders: imported.defaultHeaders,
+            cookieCount: imported.cookies.length,
+            cookieDomains: [...new Set(imported.cookies.map((cookie) => cookie.domain))].sort()
+          },
+          localStorageKeys: imported.localStorageKeys,
+          sessionStorageKeys: imported.sessionStorageKeys,
+          userInfo: imported.userInfo,
+          subscriptionInfo: imported.subscriptionInfo,
+          persistedSession: sessionSummary
+        };
       })
   );
 

@@ -47,21 +47,21 @@ export const OBSERVED_ROUTES = [
 ] as const;
 
 export const REST_ENDPOINTS = {
-  loginWithCode: { method: "POST", path: "/user/login" },
-  loginWithPassword: { method: "POST", path: "/user/login/password" },
-  logout: { method: "POST", path: "/user/logout" },
-  sendSmsCode: { method: "POST", path: "/user/smscode" },
-  refreshToken: { method: "POST", path: "/user/token/refresh" },
-  profile: { method: "GET", path: "/user/profile" },
-  quota: { method: "GET", path: "/user/quota" },
-  subscription: { method: "GET", path: "/user/subscription" },
-  checkin: { method: "POST", path: "/user/checkin" },
-  checkinStatus: { method: "GET", path: "/user/checkin/status" },
-  rebate: { method: "GET", path: "/user/rebate" },
-  rebateOverview: { method: "GET", path: "/user/rebateOverview" },
-  productList: { method: "GET", path: "/product/list" },
-  payStatus: { method: "GET", path: "/pay/status" },
-  payHistory: { method: "GET", path: "/pay/history" }
+  loginWithCode: { method: "POST", path: "/user/login", target: "web" },
+  loginWithPassword: { method: "POST", path: "/user/login/password", target: "web" },
+  logout: { method: "POST", path: "/user/logout", target: "web" },
+  sendSmsCode: { method: "POST", path: "/user/smscode", target: "web" },
+  refreshToken: { method: "POST", path: "/user/token/refresh", target: "web" },
+  profile: { method: "GET", path: "/v2/user/profile", target: "v2c" },
+  quota: { method: "GET", path: "/v2/user/quota", target: "v2c" },
+  subscription: { method: "GET", path: "/v2/user/subscription", target: "v2c" },
+  checkin: { method: "POST", path: "/v2/user/checkin", target: "v2c" },
+  checkinStatus: { method: "GET", path: "/v2/user/checkin/status", target: "v2c" },
+  rebate: { method: "GET", path: "/user/rebate", target: "web" },
+  rebateOverview: { method: "GET", path: "/user/rebateOverview", target: "web" },
+  productList: { method: "GET", path: "/v2/product/list", target: "v2c" },
+  payStatus: { method: "GET", path: "/v2/pay/status", target: "v2c" },
+  payHistory: { method: "GET", path: "/v2/pay/history", target: "v2c" }
 } as const;
 
 export const TASK_GATEWAY_METHODS = {

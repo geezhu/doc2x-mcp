@@ -20,6 +20,7 @@ export interface SessionState {
   version: 1;
   updatedAt: string;
   bearerToken?: string;
+  refreshToken?: string;
   defaultHeaders: Record<string, string>;
   cookies: StoredCookie[];
   notes?: string;
@@ -27,6 +28,7 @@ export interface SessionState {
 
 export interface SessionSummary {
   hasBearerToken: boolean;
+  hasRefreshToken: boolean;
   defaultHeaders: Record<string, string>;
   cookieCount: number;
   cookieDomains: string[];

@@ -42,6 +42,15 @@ function ensureLeadingSlash(pathname: string): string {
   return pathname.startsWith("/") ? pathname : `/${pathname}`;
 }
 
+function getRequestOrigin(url: URL): string {
+  return url.origin === DOC2X_V2C_ORIGIN ? DOC2X_WEB_ORIGIN : url.origin;
+}
+
+function getRequestReferer(url: URL): string {
+  const origin = getRequestOrigin(url);
+  return `${origin}/`;
+}
+
 async function createRequestBody(options: RequestOptions): Promise<{
   body: BodyInit | undefined;
   headers: Record<string, string>;
@@ -153,6 +162,7 @@ export class Doc2xClient {
     const cookieSummary = this.cookieJar.summary();
     return {
       hasBearerToken: Boolean(currentState.bearerToken),
+      hasRefreshToken: Boolean(currentState.refreshToken),
       defaultHeaders: currentState.defaultHeaders,
       cookieCount: cookieSummary.count,
       cookieDomains: cookieSummary.domains,
@@ -163,7 +173,9 @@ export class Doc2xClient {
 
   async setSession(input: {
     bearerToken?: string;
+    refreshToken?: string;
     cookieHeader?: string;
+    cookies?: StoredCookie[];
     defaultHeaders?: DefaultHeaderInput;
     clearExisting?: boolean;
     notes?: string;
@@ -182,9 +194,19 @@ export class Doc2xClient {
           ? undefined
           : currentState.bearerToken;
 
-    if (input.clearExisting) {
-      this.cookieJar.replace([]);
+    const nextRefreshToken =
+      input.refreshToken !== undefined
+        ? input.refreshToken
+        : input.clearExisting
+          ? undefined
+          : currentState.refreshToken;
+
+    const nextCookies = input.clearExisting ? [] : this.cookieJar.toJSON();
+    if (input.cookies) {
+      nextCookies.push(...input.cookies);
     }
+
+    this.cookieJar.replace(nextCookies);
 
     if (input.cookieHeader) {
       this.cookieJar.importCookieHeader(input.cookieHeader, new URL(DOC2X_WEB_ORIGIN));
@@ -192,6 +214,7 @@ export class Doc2xClient {
 
     await this.sessionStore.overwrite({
       bearerToken: nextBearerToken,
+      refreshToken: nextRefreshToken,
       defaultHeaders: nextHeaders,
       cookies: this.cookieJar.toJSON(),
       notes: input.notes ?? currentState.notes
@@ -218,8 +241,8 @@ export class Doc2xClient {
     const requestHeaders = new Headers({
       Accept: "application/json, text/plain, */*",
       "User-Agent": "doc2x-subscription-mcp/0.1.0",
-      Origin: url.origin,
-      Referer: target === "absolute" ? DOC2X_WEB_ORIGIN : `${url.origin}/`,
+      Origin: getRequestOrigin(url),
+      Referer: getRequestReferer(url),
       ...session.defaultHeaders,
       ...headers
     });
@@ -244,6 +267,7 @@ export class Doc2xClient {
       this.cookieJar.ingestSetCookieHeaders(setCookieHeaders, url);
       await this.sessionStore.overwrite({
         bearerToken: session.bearerToken,
+        refreshToken: session.refreshToken,
         defaultHeaders: session.defaultHeaders,
         cookies: this.cookieJar.toJSON(),
         notes: session.notes
@@ -270,6 +294,7 @@ export class Doc2xClient {
     return this.request({
       method: REST_ENDPOINTS.loginWithPassword.method,
       path: REST_ENDPOINTS.loginWithPassword.path,
+      target: REST_ENDPOINTS.loginWithPassword.target,
       payload
     });
   }
@@ -278,6 +303,7 @@ export class Doc2xClient {
     return this.request({
       method: REST_ENDPOINTS.loginWithCode.method,
       path: REST_ENDPOINTS.loginWithCode.path,
+      target: REST_ENDPOINTS.loginWithCode.target,
       payload
     });
   }
@@ -286,6 +312,7 @@ export class Doc2xClient {
     return this.request({
       method: REST_ENDPOINTS.sendSmsCode.method,
       path: REST_ENDPOINTS.sendSmsCode.path,
+      target: REST_ENDPOINTS.sendSmsCode.target,
       payload
     });
   }
@@ -293,7 +320,8 @@ export class Doc2xClient {
   async logout(): Promise<ResponseSnapshot> {
     return this.request({
       method: REST_ENDPOINTS.logout.method,
-      path: REST_ENDPOINTS.logout.path
+      path: REST_ENDPOINTS.logout.path,
+      target: REST_ENDPOINTS.logout.target
     });
   }
 
@@ -301,19 +329,23 @@ export class Doc2xClient {
     const [profile, quota, subscription, productList] = await Promise.all([
       this.request({
         method: REST_ENDPOINTS.profile.method,
-        path: REST_ENDPOINTS.profile.path
+        path: REST_ENDPOINTS.profile.path,
+        target: REST_ENDPOINTS.profile.target
       }),
       this.request({
         method: REST_ENDPOINTS.quota.method,
-        path: REST_ENDPOINTS.quota.path
+        path: REST_ENDPOINTS.quota.path,
+        target: REST_ENDPOINTS.quota.target
       }),
       this.request({
         method: REST_ENDPOINTS.subscription.method,
-        path: REST_ENDPOINTS.subscription.path
+        path: REST_ENDPOINTS.subscription.path,
+        target: REST_ENDPOINTS.subscription.target
       }),
       this.request({
         method: REST_ENDPOINTS.productList.method,
-        path: REST_ENDPOINTS.productList.path
+        path: REST_ENDPOINTS.productList.path,
+        target: REST_ENDPOINTS.productList.target
       })
     ]);
 
@@ -332,6 +364,7 @@ export class Doc2xClient {
     return this.request({
       method: "POST",
       path: TASK_GATEWAY_METHODS[operation],
+      target: "v2c",
       payload
     });
   }
@@ -343,6 +376,7 @@ export class Doc2xClient {
     return this.request({
       method: "POST",
       path: SPACE_GATEWAY_METHODS[operation],
+      target: "v2c",
       payload
     });
   }
@@ -354,6 +388,7 @@ export class Doc2xClient {
     return this.request({
       method: "POST",
       path: PAY_GATEWAY_METHODS[operation],
+      target: "v2c",
       payload
     });
   }
@@ -365,6 +400,7 @@ export class Doc2xClient {
     return this.request({
       method: "POST",
       path: USER_GATEWAY_METHODS[operation],
+      target: "v2c",
       payload
     });
   }
@@ -376,6 +412,7 @@ export class Doc2xClient {
     return this.request({
       method: "POST",
       path: UTIL_GATEWAY_METHODS[operation],
+      target: "v2c",
       payload
     });
   }

@@ -38,8 +38,14 @@ export const DOC2X_EXPORT_FORMAT = {
   word: "word"
 } as const;
 
+export const DOC2X_FORMULA_MODE = {
+  normal: "normal",
+  dollar: "dollar"
+} as const;
+
 export type NormalizedTaskStatus = "unknown" | "none" | "pending" | "success" | "failed";
 export type Doc2xExportFormat = (typeof DOC2X_EXPORT_FORMAT)[keyof typeof DOC2X_EXPORT_FORMAT];
+export type Doc2xFormulaMode = (typeof DOC2X_FORMULA_MODE)[keyof typeof DOC2X_FORMULA_MODE];
 
 export interface Doc2xParseWorkflowResult {
   ok: boolean;
@@ -1536,6 +1542,8 @@ export async function exportParseResultViaHttp(
     objectId?: string;
     outputPath: string;
     exportFormat?: Doc2xExportFormat;
+    formulaMode?: Doc2xFormulaMode;
+    mergeCrossPageForms?: boolean;
   }
 ): Promise<Doc2xExportParseResult> {
   if (!input.taskId && !input.objectId) {
@@ -1552,11 +1560,26 @@ export async function exportParseResultViaHttp(
     throw new Error(`Unsupported export format: ${exportFormat}`);
   }
 
+  if (input.formulaMode && exportFormat !== DOC2X_EXPORT_FORMAT.markdown) {
+    throw new Error("formulaMode is currently only browser-verified for markdown export");
+  }
+
+  if (
+    input.formulaMode &&
+    !Object.values(DOC2X_FORMULA_MODE).includes(input.formulaMode)
+  ) {
+    throw new Error(`Unsupported formulaMode: ${input.formulaMode}`);
+  }
+
   if (path.extname(input.outputPath).toLowerCase() !== exportConfig.artifactExtension) {
     throw new Error(
       `${exportFormat} export currently downloads a ${exportConfig.artifactExtension} package; outputPath must use ${exportConfig.artifactExtension}`
     );
   }
+
+  const formulaMode = input.formulaMode ?? exportConfig.formulaMode;
+  const mergeCrossPageForms =
+    input.mergeCrossPageForms ?? exportConfig.mergeCrossPageForms;
 
   const raw: Record<string, unknown> = {};
   const warnings: string[] = [];
@@ -1658,13 +1681,13 @@ export async function exportParseResultViaHttp(
   const createConvertPayload = {
     parseId,
     parse_id: parseId,
-    formulaMode: exportConfig.formulaMode,
-    formula_mode: exportConfig.formulaMode,
+    formulaMode,
+    formula_mode: formulaMode,
     convertTo: exportConfig.convertTo,
     convert_to: exportConfig.convertTo,
     filename: path.basename(input.outputPath, path.extname(input.outputPath)),
-    mergeCrossPageForms: exportConfig.mergeCrossPageForms,
-    merge_cross_page_forms: exportConfig.mergeCrossPageForms,
+    mergeCrossPageForms,
+    merge_cross_page_forms: mergeCrossPageForms,
     formulaLevel: exportConfig.formulaLevel,
     formula_level: exportConfig.formulaLevel
   };

@@ -27,6 +27,7 @@ import { importBrowserSession } from "./doc2x/browserSession.js";
 import { getBrowserFallbackPlan } from "./doc2x/browserFallback.js";
 import {
   DOC2X_EXPORT_FORMAT,
+  DOC2X_FORMULA_MODE,
   DOC2X_PARSE_VERSION,
   exportParseResultViaHttp,
   getParseMarkdownViaHttp,
@@ -422,15 +423,21 @@ export function createServer(client = new Doc2xClient()): McpServer {
             DOC2X_EXPORT_FORMAT.word
           ])
           .optional(),
+        formulaMode: z
+          .enum([DOC2X_FORMULA_MODE.normal, DOC2X_FORMULA_MODE.dollar])
+          .optional(),
+        mergeCrossPageForms: z.boolean().optional(),
         outputPath: z.string()
       }
     },
-    async ({ taskId, objectId, exportFormat, outputPath }) =>
+    async ({ taskId, objectId, exportFormat, formulaMode, mergeCrossPageForms, outputPath }) =>
       withToolErrorHandling("Doc2X export parse result", async () => {
         return exportParseResultViaHttp(client, {
           taskId,
           objectId,
           exportFormat,
+          formulaMode,
+          mergeCrossPageForms,
           outputPath
         });
       })

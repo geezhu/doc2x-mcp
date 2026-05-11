@@ -137,4 +137,11 @@ Confirmed live behaviors from the first successful end-to-end run:
 npm install
 npm run dev
 npm run build
+npm run verify:mcp
+```
+
+Online verification, including a real account bundle probe and one local PDF parse run:
+
+```bash
+npm run verify:mcp -- --online --pdf /abs/path/to/file.pdf
 ```

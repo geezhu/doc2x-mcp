@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "verify:mcp": "npm run build && node scripts/verify-mcp.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

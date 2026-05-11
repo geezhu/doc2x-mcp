@@ -8,6 +8,8 @@ async function main(): Promise<void> {
   const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  // Keep the stdio server alive when launched as a child process by an MCP client.
+  process.stdin.resume();
   console.error("doc2x-subscription-mcp ready");
 }
 

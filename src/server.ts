@@ -25,6 +25,7 @@ import {
 import { importBrowserSession } from "./doc2x/browserSession.js";
 import { getBrowserFallbackPlan } from "./doc2x/browserFallback.js";
 import {
+  getParseMarkdownViaHttp,
   getParseStatusViaHttp,
   parsePdfViaHttp
 } from "./doc2x/parseWorkflow.js";
@@ -345,6 +346,27 @@ export function createServer(client = new Doc2xClient()): McpServer {
         return getParseStatusViaHttp(client, {
           taskId,
           objectId
+        });
+      })
+  );
+
+  server.registerTool(
+    "doc2x_get_parse_markdown",
+    {
+      description:
+        "Fetch the Markdown result for a completed parse task or object. Supports taskId or objectId, returns merged Markdown plus page-level text, and can optionally write a local .md file.",
+      inputSchema: {
+        taskId: z.string().optional(),
+        objectId: z.string().optional(),
+        outputPath: z.string().optional()
+      }
+    },
+    async ({ taskId, objectId, outputPath }) =>
+      withToolErrorHandling("Doc2X parse markdown", async () => {
+        return getParseMarkdownViaHttp(client, {
+          taskId,
+          objectId,
+          outputPath
         });
       })
   );

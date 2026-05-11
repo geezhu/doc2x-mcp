@@ -1,8 +1,12 @@
-import { open } from "node:fs/promises";
+import { mkdir, open, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { Doc2xClient, Doc2xHttpError } from "./client.js";
 import { DOC2X_WEB_ORIGIN, REST_ENDPOINTS } from "./endpoints.js";
+import {
+  extractMarkdownFromParseResultData,
+  type Doc2xMarkdownPage
+} from "./markdownResult.js";
 import type { ResponseSnapshot } from "./types.js";
 
 const PDF_SIGNATURE = "%PDF-";
@@ -64,7 +68,28 @@ interface ParsedTaskStatus {
 interface ParseArtifacts {
   parseId?: string;
   objectId?: string;
+  parseResultData?: Record<string, unknown>;
   resultMeta?: Record<string, unknown>;
+  warnings?: string[];
+  raw: Record<string, unknown>;
+}
+
+export interface Doc2xParseMarkdownResult {
+  ok: boolean;
+  taskId?: string;
+  parseId?: string;
+  objectId?: string;
+  status: NormalizedTaskStatus;
+  rawStatus?: number;
+  progress?: number;
+  timedOut: boolean;
+  reason?: string;
+  markdown?: string;
+  pages?: Doc2xMarkdownPage[];
+  pageCount?: number;
+  outputPath?: string;
+  wroteFile: boolean;
+  warnings: string[];
   raw: Record<string, unknown>;
 }
 
@@ -167,6 +192,10 @@ function gatewayIndicatesSuccess(snapshot: ResponseSnapshot): boolean {
   return snapshot.ok;
 }
 
+function uniqueWarnings(warnings: string[]): string[] {
+  return [...new Set(warnings)];
+}
+
 function normalizeTaskStatus(rawStatus: number | undefined): NormalizedTaskStatus {
   switch (rawStatus) {
     case DOC2X_TASK_STATUS.none:
@@ -266,6 +295,77 @@ function toSuccessResult(input: {
   };
 }
 
+function toMarkdownFailureResult(input: {
+  taskId?: string;
+  parseId?: string;
+  objectId?: string;
+  status?: NormalizedTaskStatus;
+  rawStatus?: number;
+  progress?: number;
+  reason: string;
+  timedOut?: boolean;
+  markdown?: string;
+  pages?: Doc2xMarkdownPage[];
+  pageCount?: number;
+  outputPath?: string;
+  wroteFile?: boolean;
+  warnings?: string[];
+  raw: Record<string, unknown>;
+}): Doc2xParseMarkdownResult {
+  return {
+    ok: false,
+    taskId: input.taskId,
+    parseId: input.parseId,
+    objectId: input.objectId,
+    status: input.status ?? "unknown",
+    rawStatus: input.rawStatus,
+    progress: input.progress,
+    timedOut: input.timedOut ?? false,
+    reason: input.reason,
+    markdown: input.markdown,
+    pages: input.pages,
+    pageCount: input.pageCount,
+    outputPath: input.outputPath,
+    wroteFile: input.wroteFile ?? false,
+    warnings: input.warnings ?? [],
+    raw: input.raw
+  };
+}
+
+function toMarkdownSuccessResult(input: {
+  taskId?: string;
+  parseId?: string;
+  objectId?: string;
+  status?: NormalizedTaskStatus;
+  rawStatus?: number;
+  progress?: number;
+  markdown: string;
+  pages: Doc2xMarkdownPage[];
+  pageCount: number;
+  outputPath?: string;
+  wroteFile?: boolean;
+  warnings?: string[];
+  raw: Record<string, unknown>;
+}): Doc2xParseMarkdownResult {
+  return {
+    ok: true,
+    taskId: input.taskId,
+    parseId: input.parseId,
+    objectId: input.objectId,
+    status: input.status ?? "success",
+    rawStatus: input.rawStatus,
+    progress: input.progress,
+    timedOut: false,
+    markdown: input.markdown,
+    pages: input.pages,
+    pageCount: input.pageCount,
+    outputPath: input.outputPath,
+    wroteFile: input.wroteFile ?? false,
+    warnings: input.warnings ?? [],
+    raw: input.raw
+  };
+}
+
 function serializeError(error: unknown): Record<string, unknown> {
   if (error instanceof Doc2xHttpError) {
     return {
@@ -350,6 +450,98 @@ function extractParseList(snapshot: ResponseSnapshot): Record<string, unknown>[]
   });
 }
 
+function extractCreatedAtFromParseListEntry(entry: Record<string, unknown>): string | undefined {
+  const createdAt = entry.createdAt;
+  if (typeof createdAt === "string" && createdAt.length > 0) {
+    return createdAt;
+  }
+
+  const snakeCreatedAt = entry.created_at;
+  if (typeof snakeCreatedAt === "string" && snakeCreatedAt.length > 0) {
+    return snakeCreatedAt;
+  }
+
+  return undefined;
+}
+
+function extractComparableCreatedAtMs(entry: Record<string, unknown>): number | undefined {
+  const createdAt = extractCreatedAtFromParseListEntry(entry);
+  if (!createdAt) {
+    return undefined;
+  }
+
+  const timestampMs = Date.parse(createdAt);
+  return Number.isFinite(timestampMs) ? timestampMs : undefined;
+}
+
+function selectParseListEntry(
+  parseList: Record<string, unknown>[]
+): {
+  entry?: Record<string, unknown>;
+  warnings: string[];
+} {
+  if (parseList.length === 0) {
+    return {
+      warnings: []
+    };
+  }
+
+  if (parseList.length === 1) {
+    return {
+      entry: parseList[0],
+      warnings: []
+    };
+  }
+
+  const datedEntries = parseList.flatMap((entry, originalIndex) => {
+    const createdAtMs = extractComparableCreatedAtMs(entry);
+    if (createdAtMs === undefined) {
+      return [];
+    }
+
+    return [
+      {
+        entry,
+        createdAtMs,
+        originalIndex
+      }
+    ];
+  });
+
+  if (datedEntries.length > 0) {
+    const newestEntry = [...datedEntries].sort((left, right) => {
+      if (left.createdAtMs !== right.createdAtMs) {
+        return right.createdAtMs - left.createdAtMs;
+      }
+
+      return left.originalIndex - right.originalIndex;
+    })[0];
+    if (!newestEntry) {
+      return {
+        entry: parseList[0],
+        warnings: ["multiple parse results found but latest selection failed; selected first entry"]
+      };
+    }
+
+    const warnings = ["multiple parse results found, latest selected"];
+    if (datedEntries.length !== parseList.length) {
+      warnings.push(
+        "some parse results had missing or invalid created_at; selected latest comparable entry"
+      );
+    }
+
+    return {
+      entry: newestEntry.entry,
+      warnings
+    };
+  }
+
+  return {
+    entry: parseList[0],
+    warnings: ["multiple parse results found but created_at was unavailable; selected first entry"]
+  };
+}
+
 function extractParseIdFromParseListEntry(entry: Record<string, unknown> | undefined): string | undefined {
   if (!entry) {
     return undefined;
@@ -402,6 +594,10 @@ function extractObjectIdFromSpaceObject(snapshot: ResponseSnapshot): string | un
     ["data", "object_id"],
     ["data", "spaceObject", "objectId"]
   ]);
+}
+
+function extractParseResultData(snapshot: ResponseSnapshot): Record<string, unknown> | undefined {
+  return getGatewayData(snapshot) ?? getGatewayBody(snapshot);
 }
 
 async function assertLocalPdf(filePath: string): Promise<{ filePath: string; fileName: string }> {
@@ -470,12 +666,15 @@ async function enrichParseArtifacts(
 ): Promise<ParseArtifacts> {
   const raw: Record<string, unknown> = {};
   const enrichmentErrors: Record<string, unknown>[] = [];
+  const enrichmentWarnings: string[] = [];
   let parseId = input.parseId ?? input.taskId;
   let objectId = input.objectId;
   let parseDetailSnapshot: ResponseSnapshot | undefined;
   let parseListSnapshot: ResponseSnapshot | undefined;
   let spaceObjectSnapshot: ResponseSnapshot | undefined;
   let parseResultSnapshot: ResponseSnapshot | undefined;
+  let parseResultData: Record<string, unknown> | undefined;
+  let parseListEntry: Record<string, unknown> | undefined;
 
   if (parseId) {
     try {
@@ -531,7 +730,18 @@ async function enrichParseArtifacts(
       });
       raw.parseList = parseListSnapshot;
       const parseList = extractParseList(parseListSnapshot);
-      parseId = parseId ?? extractParseIdFromParseListEntry(parseList[0]);
+      if (parseId) {
+        parseListEntry = parseList.find((entry) => extractParseIdFromParseListEntry(entry) === parseId);
+      }
+
+      if (!parseId) {
+        const selectedParseListEntry = selectParseListEntry(parseList);
+        parseListEntry = selectedParseListEntry.entry;
+        enrichmentWarnings.push(...selectedParseListEntry.warnings);
+        parseId = extractParseIdFromParseListEntry(parseListEntry);
+      } else if (!parseListEntry && parseList.length > 0) {
+        parseListEntry = parseList[0];
+      }
     } catch (error) {
       enrichmentErrors.push({
         step: "getObjectParseList",
@@ -564,6 +774,7 @@ async function enrichParseArtifacts(
         parse_id: parseId
       });
       raw.parseResult = parseResultSnapshot;
+      parseResultData = extractParseResultData(parseResultSnapshot);
     } catch (error) {
       enrichmentErrors.push({
         step: "getObjectParseResult",
@@ -575,9 +786,11 @@ async function enrichParseArtifacts(
   if (enrichmentErrors.length > 0) {
     raw.enrichmentErrors = enrichmentErrors;
   }
+  if (enrichmentWarnings.length > 0) {
+    raw.enrichmentWarnings = uniqueWarnings(enrichmentWarnings);
+  }
 
   const parseList = parseListSnapshot ? extractParseList(parseListSnapshot) : [];
-  const parseListEntry = parseList[0];
   const resultMeta: Record<string, unknown> = {};
   if (spaceObjectSnapshot) {
     resultMeta.spaceObject = getGatewayData(spaceObjectSnapshot) ?? getGatewayBody(spaceObjectSnapshot);
@@ -598,7 +811,9 @@ async function enrichParseArtifacts(
   return {
     parseId,
     objectId,
+    parseResultData,
     resultMeta: Object.keys(resultMeta).length > 0 ? resultMeta : undefined,
+    warnings: uniqueWarnings(enrichmentWarnings),
     raw
   };
 }
@@ -976,4 +1191,180 @@ export async function getParseStatusViaHttp(
     reason: "Parse task is not complete yet",
     raw
   };
+}
+
+export async function getParseMarkdownViaHttp(
+  client: Doc2xClient,
+  input: {
+    taskId?: string;
+    objectId?: string;
+    outputPath?: string;
+  }
+): Promise<Doc2xParseMarkdownResult> {
+  if (!input.taskId && !input.objectId) {
+    throw new Error("taskId or objectId is required");
+  }
+
+  if (input.outputPath && !path.isAbsolute(input.outputPath)) {
+    throw new Error("outputPath must be an absolute path");
+  }
+
+  const raw: Record<string, unknown> = {};
+  const warnings: string[] = [];
+  let parseId = input.taskId;
+  let objectId = input.objectId;
+  let taskStatus: ParsedTaskStatus = {
+    status: "unknown"
+  };
+
+  if (input.taskId) {
+    const taskStatusSnapshot = await client.taskOperation("getTaskStatus", {
+      outputId: input.taskId,
+      output_id: input.taskId
+    });
+    raw.taskStatus = taskStatusSnapshot;
+    taskStatus = parseTaskStatus(taskStatusSnapshot);
+
+    if (!gatewayIndicatesSuccess(taskStatusSnapshot)) {
+      return toMarkdownFailureResult({
+        taskId: input.taskId,
+        parseId,
+        objectId,
+        status: taskStatus.status,
+        rawStatus: taskStatus.rawStatus,
+        progress: taskStatus.progress,
+        reason: taskStatus.reason ?? "GetTaskStatus returned ok=false",
+        warnings,
+        raw
+      });
+    }
+
+    if (taskStatus.status !== "success") {
+      return toMarkdownFailureResult({
+        taskId: input.taskId,
+        parseId,
+        objectId,
+        status: taskStatus.status,
+        rawStatus: taskStatus.rawStatus,
+        progress: taskStatus.progress,
+        reason:
+          taskStatus.status === "failed"
+            ? taskStatus.reason ?? "Parse task is failed"
+            : "Parse task is not complete yet",
+        warnings,
+        raw
+      });
+    }
+  }
+
+  const artifacts = await enrichParseArtifacts(client, {
+    taskId: input.taskId,
+    parseId,
+    objectId
+  });
+  Object.assign(raw, artifacts.raw);
+  warnings.push(...(artifacts.warnings ?? []));
+  parseId = artifacts.parseId ?? parseId;
+  objectId = artifacts.objectId ?? objectId;
+
+  if (input.taskId && input.objectId && objectId && objectId !== input.objectId) {
+    warnings.push(`taskId/objectId mismatch detected: requested ${input.objectId}, resolved ${objectId}`);
+    return toMarkdownFailureResult({
+      taskId: input.taskId,
+      parseId,
+      objectId,
+      status: taskStatus.status,
+      rawStatus: taskStatus.rawStatus,
+      progress: taskStatus.progress,
+      reason: `taskId ${input.taskId} does not resolve to objectId ${input.objectId}`,
+      warnings: uniqueWarnings(warnings),
+      raw
+    });
+  }
+
+  if (!artifacts.parseResultData) {
+    return toMarkdownFailureResult({
+      taskId: input.taskId,
+      parseId,
+      objectId,
+      status: input.taskId ? taskStatus.status : "unknown",
+      rawStatus: taskStatus.rawStatus,
+      progress: taskStatus.progress,
+      reason:
+        input.objectId && !parseId
+          ? `No parse result found for objectId ${input.objectId}`
+          : "Parse result is not available yet",
+      warnings: uniqueWarnings(warnings),
+      raw
+    });
+  }
+
+  const extractedMarkdown = extractMarkdownFromParseResultData(artifacts.parseResultData);
+  if (!extractedMarkdown.ok) {
+    return toMarkdownFailureResult({
+      taskId: input.taskId,
+      parseId,
+      objectId,
+      status: input.taskId ? taskStatus.status : "success",
+      rawStatus: taskStatus.rawStatus,
+      progress: taskStatus.progress,
+      reason: extractedMarkdown.reason,
+      warnings: uniqueWarnings([...warnings, ...extractedMarkdown.warnings]),
+      raw
+    });
+  }
+
+  const normalizedWarnings = uniqueWarnings([...warnings, ...extractedMarkdown.warnings]);
+  let wroteFile = false;
+
+  if (input.outputPath) {
+    try {
+      await mkdir(path.dirname(input.outputPath), {
+        recursive: true
+      });
+      await writeFile(input.outputPath, extractedMarkdown.markdown, {
+        encoding: "utf8",
+        flag: "wx"
+      });
+      wroteFile = true;
+    } catch (error) {
+      const ioError = error as NodeJS.ErrnoException;
+      if (ioError?.code === "EEXIST") {
+        return toMarkdownFailureResult({
+          taskId: input.taskId,
+          parseId,
+          objectId,
+          status: input.taskId ? taskStatus.status : "success",
+          rawStatus: taskStatus.rawStatus,
+          progress: taskStatus.progress,
+          reason: `Output path already exists: ${input.outputPath}`,
+          markdown: extractedMarkdown.markdown,
+          pages: extractedMarkdown.pages,
+          pageCount: extractedMarkdown.pageCount,
+          outputPath: input.outputPath,
+          wroteFile: false,
+          warnings: normalizedWarnings,
+          raw
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  return toMarkdownSuccessResult({
+    taskId: input.taskId,
+    parseId,
+    objectId,
+    status: input.taskId ? taskStatus.status : "success",
+    rawStatus: taskStatus.rawStatus,
+    progress: taskStatus.progress,
+    markdown: extractedMarkdown.markdown,
+    pages: extractedMarkdown.pages,
+    pageCount: extractedMarkdown.pageCount,
+    outputPath: input.outputPath,
+    wroteFile,
+    warnings: normalizedWarnings,
+    raw
+  });
 }

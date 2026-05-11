@@ -4,16 +4,18 @@ An MCP server scaffold for driving the Doc2X web subscription surface through th
 
 ## Status
 
-This project is designed around observed public route and bundle metadata from the Doc2X web app:
+This project is designed around observed public route and bundle metadata from the Doc2X web app, plus verified logged-in browser traffic:
 
 - REST-style endpoints such as `/user/*`, `/pay/*`, `/product/list`, `/term/user/*`
 - Gateway endpoints such as `/gateway.v1.TaskService/CreateParseTask`
+- Verified web-session API traffic against `https://v2c.doc2x.noedgeai.com`
 - Mixed account, task, parse/translate result, billing, and history flows
 - Browser-only or captcha-gated flows are modeled with fallback hooks
 
 The first version is HTTP-first:
 
 - Reuses imported cookies / bearer tokens
+- Can import a live session directly from a Chrome DevTools endpoint
 - Persists session state locally under `.doc2x/session.json`
 - Exposes both high-level tools and raw endpoint calls for uncovered flows
 
@@ -38,6 +40,7 @@ The first version is HTTP-first:
 - `doc2x_surface_catalog`
 - `doc2x_session_get`
 - `doc2x_session_set`
+- `doc2x_import_browser_session`
 - `doc2x_session_clear`
 - `doc2x_login_password`
 - `doc2x_login_code`
@@ -55,12 +58,25 @@ The first version is HTTP-first:
 
 The server is HTTP-first and works best when you import a real browser session:
 
+1. Launch Chrome or Chromium with a DevTools remote debugging port.
+2. Log into Doc2X in that browser profile.
+3. Call `doc2x_import_browser_session`.
+4. Use the structured tools or `doc2x_request`.
+
+Manual fallback:
+
 1. Log into Doc2X in a browser if needed.
 2. Copy the cookie header or capture the relevant bearer token.
 3. Call `doc2x_session_set`.
 4. Use the structured tools or `doc2x_request`.
 
 Session data is persisted to `.doc2x/session.json`.
+
+The verified web app pattern is:
+
+- Requests go to `https://v2c.doc2x.noedgeai.com`
+- Auth is sent as `Authorization: Bearer <token>`
+- Browser-originated requests keep `Origin` and `Referer` set to `https://doc2x.noedgeai.com/`
 
 ## Known Gaps
 

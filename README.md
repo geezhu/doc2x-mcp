@@ -29,6 +29,7 @@ The first version is HTTP-first:
   - `GetTaskStatus` polling
   - `GetObjectParse`, `GetObjectParseList`, `GetObjectParseResult`, and `GetSpaceObject` enrichment
 - Parse status recovery by `taskId` or `objectId`
+- Markdown result consumption by `taskId` or `objectId`, including optional local `.md` export
 - Session import / update / clear
 - Password login, SMS-code login, SMS-code request
 - Profile, quota, subscription, and product list lookup
@@ -56,6 +57,7 @@ The first version is HTTP-first:
 - `doc2x_get_account_bundle`
 - `doc2x_parse_pdf`
 - `doc2x_get_parse_status`
+- `doc2x_get_parse_markdown`
 - `doc2x_create_task`
 - `doc2x_space_operation`
 - `doc2x_pay_operation`
@@ -117,11 +119,22 @@ The current implementation deliberately freezes scope to the first executable sl
 
 `doc2x_get_parse_status` is the minimal recovery tool for tasks that timed out in the blocking flow.
 
+`doc2x_get_parse_markdown` consumes the completed parse result and returns:
+
+- merged Markdown text
+- `pages: { pageIndex, markdown }[]`
+- `pageCount`
+- `warnings`
+- optional `outputPath` / `wroteFile`
+
+The merged Markdown preserves explicit page boundaries with markers such as `<!-- page: 1 -->`, keeps empty pages, and surfaces parse-result anomalies through warnings instead of silently dropping them.
+
 Confirmed live behaviors from the first successful end-to-end run:
 
 - Current gateway responses use `code: "success"` plus snake_case payload keys such as `output_id`, `form_data`, `object_parse_list`, and `object_id`
 - The first `CreateParseTask` immediately after upload can transiently return `404 not_found`; the MCP retries this step automatically before failing
 - A real parse result was validated with a one-page local PDF and returned Markdown content from `GetObjectParseResult`
+- The Markdown result consumer was validated against the same fresh parse task and wrote a local `.md` file whose content exactly matched the returned `markdown` field
 
 ## Known Gaps
 

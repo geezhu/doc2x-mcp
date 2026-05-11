@@ -9,6 +9,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 const REQUIRED_TOOLS = [
   "doc2x_surface_catalog",
+  "doc2x_auth_browser",
   "doc2x_session_get",
   "doc2x_browser_fallback_plan",
   "doc2x_request",
@@ -21,7 +22,9 @@ const REQUIRED_TOOLS = [
 function parseArgs(argv) {
   const parsed = {
     online: false,
-    pdfPath: undefined
+    pdfPath: undefined,
+    browserProfile: undefined,
+    browserDebugPort: undefined
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -39,6 +42,31 @@ function parseArgs(argv) {
       }
 
       parsed.pdfPath = nextValue;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--browser-profile") {
+      const nextValue = argv[index + 1];
+      if (!nextValue) {
+        throw new Error("--browser-profile requires a directory path");
+      }
+
+      parsed.browserProfile = nextValue;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--browser-debug-port") {
+      const nextValue = argv[index + 1];
+      if (!nextValue) {
+        throw new Error("--browser-debug-port requires a port number");
+      }
+
+      parsed.browserDebugPort = Number.parseInt(nextValue, 10);
+      if (!Number.isInteger(parsed.browserDebugPort) || parsed.browserDebugPort <= 0) {
+        throw new Error("--browser-debug-port must be a positive integer");
+      }
       index += 1;
       continue;
     }
@@ -148,8 +176,35 @@ async function main() {
     assert.equal(typeof sessionSummary.hasBearerToken, "boolean", "session summary should expose hasBearerToken");
     assert.equal(typeof sessionSummary.hasRefreshToken, "boolean", "session summary should expose hasRefreshToken");
 
+    const invalidBrowserAuthCall = await callToolRaw(client, "doc2x_auth_browser", {
+      timeoutMs: 1000,
+      executablePath: "/definitely/not/a/browser",
+      profileDir: "/tmp/doc2x-invalid-auth-profile"
+    });
+    assert.equal(
+      invalidBrowserAuthCall.isError,
+      true,
+      "browser auth tool should fail fast when the browser executable path is invalid"
+    );
+
     if (args.online) {
       logStep("Running online checks");
+      const browserProfile = args.browserProfile ?? "/tmp/doc2x-monitorable-profile";
+      const browserAuth = await callJsonTool(client, "doc2x_auth_browser", {
+        timeoutMs: 30000,
+        profileDir: browserProfile,
+        debugPort: args.browserDebugPort ?? 9222,
+        notes: "verify-mcp online auth"
+      });
+      assert.equal(browserAuth.ok, true, "browser auth should succeed in online mode");
+      assert.equal(browserAuth.authenticated, true, "browser auth should report authenticated=true");
+      assert.equal(browserAuth.timedOut, false, "browser auth should not time out during silent reuse");
+      assert.equal(typeof browserAuth.debugBaseUrl, "string", "browser auth should return debugBaseUrl");
+      assert.equal(browserAuth.profileDir, browserProfile, "browser auth should echo the managed profile path");
+
+      const sessionAfterAuth = await callJsonTool(client, "doc2x_session_get");
+      assert.equal(sessionAfterAuth.hasBearerToken, true, "browser auth should persist a bearer token");
+
       const requestProbe = await callJsonTool(client, "doc2x_request", {
         target: "v2c",
         path: "/v2/user/profile",

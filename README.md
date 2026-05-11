@@ -187,23 +187,50 @@ Current formally supported export formats:
 - `markdown`
   - verified browser payload:
     - `{"parse_id":"...","formula_mode":"normal","convert_to":1,"filename":"doc2x-test","merge_cross_page_forms":false,"formula_level":0}`
+  - additionally browser-verified Markdown override payload:
+    - `{"parse_id":"...","formula_mode":"dollar","convert_to":1,"filename":"doc2x-test","merge_cross_page_forms":true,"formula_level":0}`
+  - formal MCP inputs now include:
+    - `formulaMode = "normal" | "dollar"` for `exportFormat = "markdown"`
+    - `mergeCrossPageForms = true | false`
   - verified downloaded artifact type:
     - `application/zip`
   - because the confirmed browser download is a zip package, `outputPath` currently must end in `.zip`
 - `latex`
   - verified browser payload:
     - `{"parse_id":"...","formula_mode":"normal","convert_to":2,"filename":"doc2x-test","merge_cross_page_forms":false,"formula_level":0}`
+  - verified non-default browser payload:
+    - `{"parse_id":"...","formula_mode":"normal","convert_to":2,"filename":"doc2x-cross-table-test","merge_cross_page_forms":true,"formula_level":0}`
   - verified downloaded artifact type:
     - `application/zip`
   - the verified artifact is a zip package, so `outputPath` must end in `.zip`
 - `word`
   - verified browser payload:
     - `{"parse_id":"...","formula_mode":"normal","convert_to":3,"filename":"doc2x-test","merge_cross_page_forms":false,"formula_level":0}`
+  - verified non-default browser payload:
+    - `{"parse_id":"...","formula_mode":"normal","convert_to":3,"filename":"doc2x-cross-table-test","merge_cross_page_forms":true,"formula_level":0}`
   - verified downloaded artifact type:
     - `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
   - the verified artifact is a `.docx` file, so `outputPath` must end in `.docx`
 
-This is intentionally narrower than the full web dialog. Formats and options such as `HTML`, `PDF(HTML)`, `merge_cross_page_forms=true`, alternate formula settings, or image-source variants are not yet exposed until they are individually captured and validated from real browser requests.
+This is intentionally narrower than the full web dialog. The currently exposed advanced export knobs are:
+
+- `formulaMode`
+  - only formal for `markdown`
+  - currently verified values:
+    - `"normal"`
+    - `"dollar"`
+- `mergeCrossPageForms`
+  - browser-verified as `true` for `markdown / latex / word`
+  - default `false` is also verified for `markdown / latex / word`
+
+The following still remain outside the formal MCP schema until they are individually captured and validated from real browser requests:
+
+- `HTML`
+- `PDF(HTML)`
+- non-default `formula_level`
+- browser-only image-source flows such as `在线图床`
+- the extra `在线图床`-only toggles currently visible in the web dialog
+- Word-only `退化公式级别` UI variants such as `行内公式变为普通文本` and `全部公式变为普通文本`
 
 Confirmed live behaviors from the first successful end-to-end run:
 
@@ -215,6 +242,9 @@ Confirmed live behaviors from the first successful end-to-end run:
 - Additional browser-verified export runs confirmed:
   - `LateX -> convert_to = 2 -> application/zip`
   - `Word -> convert_to = 3 -> application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+- A real raster-image verification confirmed the image-source split:
+  - default `本地图片` Markdown export localizes images into a zip `images/` directory and rewrites Markdown to relative image paths
+  - `在线图床` does not use the convert HTTP chain; the browser directly downloads a `.md` file built from `GetObjectParseResult`, preserving `cdn.noedgeai.com` image URLs
 
 ## Known Gaps
 

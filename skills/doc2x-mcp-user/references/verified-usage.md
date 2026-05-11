@@ -120,6 +120,8 @@ Advanced/raw tools:
 - `contentType?`
 - `byteLength?`
 - `warnings`
+- `raw`
+  - includes the emitted `createConvertPayload`, which is useful when checking advanced export settings
 
 ## Parse
 
@@ -161,17 +163,28 @@ Verified formats:
 - `markdown`
   - `convert_to = 1`
   - downloaded artifact is zip
+  - verified advanced settings:
+    - `formulaMode = "dollar"`
+    - `mergeCrossPageForms = true`
 - `latex`
   - `convert_to = 2`
   - downloaded artifact is zip
+  - verified advanced settings:
+    - `mergeCrossPageForms = true`
 - `word`
   - `convert_to = 3`
   - downloaded artifact is docx
+  - verified advanced settings:
+    - `mergeCrossPageForms = true`
 
 Do not promise:
 
 - `html`
 - `pdf(html)`
 - `导出到MD编辑器`
+- non-default `formula_level`
+- Word-only `退化公式级别` variants such as `行内公式变为普通文本` / `全部公式变为普通文本`
+- image-source variants such as `在线图床`
+- the extra `在线图床`-only toggles
 
 unless they have been separately re-verified and added to the MCP schema.

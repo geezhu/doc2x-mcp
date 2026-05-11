@@ -596,9 +596,39 @@ Doc2X MCP PDF Test This is a one-page sample.
 - `mimeType = "application/zip"`
 - `content-length = "317"`（浏览器抓包样本）
 
+后续补充浏览器抓包，又额外确认了一条“非默认 Markdown 导出配置”的真实请求：
+
+```json
+{
+  "parse_id": "op_d80rkmk91nqc738mntcg",
+  "formula_mode": "dollar",
+  "convert_to": 1,
+  "filename": "doc2x-test",
+  "merge_cross_page_forms": true,
+  "formula_level": 0
+}
+```
+
+这条请求证明了：
+
+- `formula_mode` 的非默认值 `"dollar"` 已经进入真实网页请求
+- `merge_cross_page_forms = true` 已经进入真实网页请求
+- `formula_level` 在该次非默认导出中仍然保持默认 `0`
+
+对应链路仍然完整走通：
+
+- `CreateConvertParseTask`
+- `GetConvertTaskStatus`
+- `GET https://oss.consumer.doc2x.noedgeai.com/convert/<id>`
+
+最终下载产物依然是：
+
+- `mimeType = "application/zip"`
+
 本轮 MCP 验证脚本新增导出断言后，会将结果写到：
 
 - `/tmp/doc2x-verify-export.zip`
+- `/tmp/doc2x-verify-export-dollar.zip`
 
 导出工具成功态需要同时满足：
 
@@ -610,6 +640,20 @@ Doc2X MCP PDF Test This is a one-page sample.
 - 返回的 `byteLength` 与真实文件大小一致
 
 因此，这一阶段已经不仅能“取回 parse 结果”，还能够沿着真实网页导出链路拿到最终下载产物。
+
+补充后的在线验证还额外断言了这条高级导出路径：
+
+1. `doc2x_export_parse_result`
+   - `exportFormat = "markdown"`
+   - `formulaMode = "dollar"`
+   - `mergeCrossPageForms = true`
+2. 返回体里的请求回显
+   - `raw.createConvertPayload.formula_mode === "dollar"`
+   - `raw.createConvertPayload.merge_cross_page_forms === true`
+3. 本地导出文件
+   - `/tmp/doc2x-verify-export-dollar.zip`
+   - 文件非空
+   - 文件头为 `PK`
 
 为避免报告停留在“脚本通过”的层面，本次还额外采集了一轮当前修改版本的真实 MCP 返回值。该轮证据采集的关键结果如下：
 
@@ -676,6 +720,231 @@ Doc2X MCP PDF Test This is a one-page sample.
 - `sha256`：`f4dbc388e0848588dd428c33f422c07e9fad15c01c45607a77aff27fdfba9835`
 
 这意味着当前默认网页 Markdown 导出，在 MCP 里已经被真实验证为“zip 包下载链路”，而不是裸 `.md` 文件写出。
+
+### 7.6.1 `merge_cross_page_forms = true` 的 LateX / Word 补证
+
+为了确认 `merge_cross_page_forms = true` 不是只在 Markdown 导出里成立，又专门对跨页表格样本
+
+- `/tmp/doc2x-cross-table-test.pdf`
+
+补做了两轮浏览器抓包：
+
+- LateX：
+  - `/tmp/doc2x-table-latex-merge-true.json`
+  - 真实请求：
+
+```json
+{
+  "parse_id": "op_d80va62lb0pc73810fmg",
+  "formula_mode": "normal",
+  "convert_to": 2,
+  "filename": "doc2x-cross-table-test",
+  "merge_cross_page_forms": true,
+  "formula_level": 0
+}
+```
+
+- Word：
+  - `/tmp/doc2x-table-word-merge-true.json`
+  - 真实请求：
+
+```json
+{
+  "parse_id": "op_d80va62lb0pc73810fmg",
+  "formula_mode": "normal",
+  "convert_to": 3,
+  "filename": "doc2x-cross-table-test",
+  "merge_cross_page_forms": true,
+  "formula_level": 0
+}
+```
+
+随后又用当前 MCP 对同一个 `taskId = op_d80va62lb0pc73810fmg` 做了默认/开启两组导出对比：
+
+| 格式 | `merge_cross_page_forms` | 输出文件 | 字节数 | SHA-256 |
+| --- | --- | --- | --- | --- |
+| LateX | `false` | `/tmp/doc2x-latex-default.zip` | `2455` | `0809760ae00d1666acc900abd81cef0858fd7edb2c53d9e3c632e43a1cf83c69` |
+| LateX | `true` | `/tmp/doc2x-latex-merge.zip` | `2527` | `cf9efae1735ae33750e866c09c55aa12fc579c48006e88bcb012c7d0ec7bc88a` |
+| Word | `false` | `/tmp/doc2x-word-default.docx` | `14733` | `2d707e2690a075b768d7644ee00ff08666194180fd802123f423040168816f97` |
+| Word | `true` | `/tmp/doc2x-word-merge.docx` | `14667` | `f3e5f3d1350ff85ac74164317bafa9ccf62547a210264eb28e966ccc01698384` |
+
+这说明：
+
+- `merge_cross_page_forms = true` 在 `markdown / latex / word` 三种正式导出格式中都已经拿到真实请求证据
+- 当前 MCP 也能成功写出对应产物
+- 默认版与开启版产物在大小和哈希上都发生了变化，因此这不是“请求有了但结果没变”的伪参数
+
+### 7.6.2 未完成项的继续浏览器实验
+
+在默认导出、`formula_mode = "dollar"` 和 `merge_cross_page_forms = true` 已经坐实后，又继续追了两项之前悬而未决的网页能力：
+
+1. `formula_level` 的非默认值
+2. `图片来源` 的其它取值
+
+#### A. `formula_level` 非默认值
+
+重新打开导出弹窗并切回 `图片来源 = 本地图片` 后，补采了一份当前 live 页面证据：
+
+- `/tmp/doc2x-local-formula-ui.json`
+
+该次 `bodyText` 中实际出现的相关项只有：
+
+- `合并跨页表格`
+- `导出格式`
+- `导出Markdown`
+- `公式符`
+- `图片来源`
+
+没有出现：
+
+- `退化公式级别`
+- `退化公式`
+
+这说明在当前 live 网页的已验证 Markdown 导出路径里，已经**看不到可操作的 `formula_level` 非默认值控件**。
+
+不过，随后又在 Word 导出弹窗里补抓到了 `退化公式级别` 的真实 UI 选项：
+
+- `/tmp/doc2x-word-formula-level-options.json`
+- `/tmp/doc2x-word-formula-level-options.json.png`
+
+可见选项是：
+
+- `不退化公式`
+- `行内公式变为普通文本`
+- `全部公式变为普通文本`
+
+之后又尝试通过自动化点击：
+
+- `/tmp/doc2x-word-formula-inline-text.json`
+- `/tmp/doc2x-word-formula-all-text.json`
+
+这两轮都只成功坐实了“选项文本真实存在”，但没有继续进入 `CreateConvertParseTask`。因此，到本轮为止，`formula_level != 0` 仍然不能作为正式 MCP 输入参数开放。
+
+#### B. `图片来源 = 在线图床`
+
+重新打开导出弹窗后，当前 live UI 证据见：
+
+- `/tmp/doc2x-after-topbar-click.png`
+
+该次弹窗真实可见项为：
+
+- `图片来源 = 在线图床`
+- `清除注释信息`
+- `代码缩进兼容性增强`
+
+随后，针对弹窗里的真实 `导 出` 按钮做了一次独立抓包：
+
+- `/tmp/doc2x-capture-image-host-submit.json`
+
+该次点击的关键网络结果不是 `CreateConvertParseTask`，而是：
+
+```json
+[
+  {
+    "url": "https://v2c.doc2x.noedgeai.com/gateway.v1.SpaceService/GetObjectParseResult",
+    "method": "POST"
+  },
+  {
+    "url": "https://doc2x-observe.cn-beijing.log.aliyuncs.com/logstores/doc2x-opentelemetry-raw/track?APIVersion=0.6.0",
+    "method": "POST"
+  }
+]
+```
+
+也就是说，这次真实点击里：
+
+- 看到了结果刷新
+- 看到了前端埋点上报
+- **没有**看到：
+  - `CreateConvertParseTask`
+  - `GetConvertTaskStatus`
+  - `/convert/<id>` 下载 URL
+
+因此，到本轮为止，对这两项更准确的结论是：
+
+- `formula_level` 非默认值
+  - Markdown 路径里未再暴露控件
+  - Word 路径里可见 `行内公式变为普通文本 / 全部公式变为普通文本`
+  - 但仍未抓到可靠请求映射
+- `图片来源 = 在线图床`
+  - UI 与附带开关可见
+  - 但当前真实提交实验没有进入已验证的 HTTP 导出链路
+  - 所以仍然不能作为正式 MCP 输入参数开放
+
+#### C. `图片来源` 真实语义验证
+
+为了确认“`在线图床` 到底是不是让导出的 Markdown 继续引用 Doc2X 远程图片链接”，又补做了一轮包含真实位图图片的验证。
+
+本地构造的样本文件为：
+
+- `/tmp/doc2x-raster-figure.svg`
+- `/tmp/doc2x-raster-figure.png`
+- `/tmp/doc2x-raster-test.pdf`
+
+随后对 `/tmp/doc2x-raster-test.pdf` 执行真实解析，返回的 `GetObjectParseResult` 中已经包含远程图片：
+
+```html
+<img src="https://cdn.noedgeai.com/bo_d80uelk91nqc7388tjm0_0.jpg?x=123&y=324&w=1527&h=815&r=0"/>
+```
+
+这说明 parse 结果层本来就是远程 URL。
+
+然后分别验证了两条导出路径：
+
+1. `图片来源 = 本地图片`
+   - 通过 MCP 对同一 parse 结果执行默认 Markdown 导出
+   - 输出文件：`/tmp/doc2x-raster-local.zip`
+   - `unzip -l` 结果中出现：
+     - `doc2x-raster-local.md`
+     - `images/0_123_324_1527_815_0.jpg`
+     - `images/bo_d80uelk91nqc7388tjm0_0_123_324_1527_815_0.jpg`
+   - 导出的 Markdown 内容为：
+
+```markdown
+![0_123_324_1527_815_0.jpg](images/0_123_324_1527_815_0.jpg)
+```
+
+2. `图片来源 = 在线图床`
+   - 在真实浏览器中切到 `在线图床`
+   - 当前弹窗状态截图：
+     - `/tmp/doc2x-online-host-dialog-state.png`
+   - 点击紫色 `导 出` 后的全量抓包：
+     - `/tmp/doc2x-capture-all-export.json`
+   - 该次点击只触发：
+
+```json
+[
+  {
+    "url": "https://v2c.doc2x.noedgeai.com/gateway.v1.SpaceService/GetObjectParseResult",
+    "method": "POST"
+  }
+]
+```
+
+   - 没有触发：
+     - `CreateConvertParseTask`
+     - `GetConvertTaskStatus`
+     - `/convert/<id>`
+   - 但浏览器 `Downloads/` 目录中真实新增了两个 `.md` 文件：
+     - `/home/oliviero/Downloads/doc2x-raster-test-20260511223127.md`
+     - `/home/oliviero/Downloads/doc2x-raster-test-20260511223348.md`
+   - 两个文件内容一致，均保留远程图片：
+
+```html
+<img src="https://cdn.noedgeai.com/bo_d80uelk91nqc7388tjm0_0.jpg?x=123&y=324&w=1527&h=815&r=0"/>
+```
+
+因此，这轮实验已经把“图片来源”的真实语义坐实：
+
+- `本地图片`
+  - 服务器 convert 链路
+  - 下载 zip 包
+  - 压缩包内带 `images/` 目录
+  - Markdown 改写成相对路径图片引用
+- `在线图床`
+  - 浏览器直接基于 `GetObjectParseResult` 生成 `.md` 下载
+  - 不走当前已验证的 convert HTTP 链路
+  - Markdown 保留 `cdn.noedgeai.com` 远程图片 URL
 
 ### 7.7 多页 PDF 验证
 

@@ -405,6 +405,17 @@ Parameters:
     - `markdown`
     - `latex`
     - `word`
+- `formulaMode?`
+  - currently formal only for `exportFormat = "markdown"`
+  - verified values:
+    - `normal`
+    - `dollar`
+- `mergeCrossPageForms?`
+  - boolean
+  - browser-verified `true` path exists for:
+    - `markdown`
+    - `latex`
+    - `word`
 - `outputPath`
   - absolute local output path
   - use:
@@ -453,6 +464,38 @@ Response format:
   - non-fatal export caveats
 - `raw`
   - raw convert-task and download snapshots
+
+Verified export boundary:
+
+- `markdown`
+  - default browser payload:
+    - `formula_mode = "normal"`
+    - `merge_cross_page_forms = false`
+    - `formula_level = 0`
+  - additionally verified Markdown override:
+    - `formula_mode = "dollar"`
+    - `merge_cross_page_forms = true`
+- `latex`
+  - default browser payload:
+    - `formula_mode = "normal"`
+    - `merge_cross_page_forms = false`
+    - `formula_level = 0`
+  - additionally verified LateX override:
+    - `merge_cross_page_forms = true`
+- `word`
+  - default browser payload:
+    - `formula_mode = "normal"`
+    - `merge_cross_page_forms = false`
+    - `formula_level = 0`
+  - additionally verified Word override:
+    - `merge_cross_page_forms = true`
+
+Do not promise:
+
+- non-default `formula_level`
+- Word-only `退化公式级别` variants such as `行内公式变为普通文本` or `全部公式变为普通文本`
+- image-source variants such as `在线图床`
+- the extra `在线图床`-only toggles
 
 ### Account and inspection tools
 

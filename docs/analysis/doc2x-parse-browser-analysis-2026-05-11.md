@@ -642,9 +642,15 @@ GET https://oss.consumer.doc2x.noedgeai.com/convert/cv_d80ov9k91nqc73f3emtg
 | `convert_to` | `1` | `2` | `3` | 未抓到 | 未抓到 | 未抓到 | `markdown/latex/word` 已验证 |
 | `filename` | 已验证 | 已验证 | 已验证 | 未抓到 | 未抓到 | 未抓到 | 当前只对前三种格式确认 |
 | `formula_mode = "normal"` | 已验证 | 已验证 | 已验证 | 未抓到 | 未抓到 | 未抓到 | 只验证默认值 |
-| `merge_cross_page_forms = false` | 已验证 | 已验证 | 已验证 | 未抓到 | 未抓到 | 未抓到 | 只验证默认值 |
+| `formula_mode = "dollar"` | 已验证 | 未抓到 | 未抓到 | 未抓到 | 未抓到 | 未抓到 | 仅 Markdown 非默认值已验证 |
+| `merge_cross_page_forms = false` | 已验证 | 已验证 | 已验证 | 未抓到 | 未抓到 | 未抓到 | 默认值已验证 |
+| `merge_cross_page_forms = true` | 已验证 | 已验证 | 已验证 | 未抓到 | 未抓到 | 未抓到 | `markdown/latex/word` 非默认值已验证 |
 | `formula_level = 0` | 已验证 | 已验证 | 已验证 | 未抓到 | 未抓到 | 未抓到 | 只验证默认值 |
-| `图片来源 本地图片` | UI 可见 | UI 可见 | UI 可见 | UI 可见 | UI 可见 | UI 可见 | 仅 UI 可见，未验证请求映射 |
+| `formula_level != 0` | 未抓到 | 未抓到 | UI 可见 | 未抓到 | 未抓到 | 未抓到 | 当前只在 Word 导出弹窗里观察到 `行内公式变为普通文本 / 全部公式变为普通文本`，但仍未抓到真实请求 |
+| `图片来源 本地图片` | UI 可见，语义已验证 | 未抓到 | 未抓到 | 未抓到 | 未抓到 | 未抓到 | 当前仅在 Markdown 导出弹窗里观察到，并已验证为默认 convert 链路 |
+| `图片来源 在线图床` | UI 可见 | 未抓到 | 未抓到 | 未抓到 | 未抓到 | 未抓到 | 仅在 Markdown 导出弹窗里观察到；点击真实导出按钮后仍未出现 `CreateConvertParseTask` |
+| `清除注释信息` | UI 可见 | 未抓到 | 未抓到 | 未抓到 | 未抓到 | 未抓到 | 仅在 `在线图床` 变体下观察到；点击真实导出按钮后仍未出现请求映射 |
+| `代码缩进兼容性增强` | UI 可见 | 未抓到 | 未抓到 | 未抓到 | 未抓到 | 未抓到 | 仅在 `在线图床` 变体下观察到；点击真实导出按钮后仍未出现请求映射 |
 
 ### 4. 导出输出参数矩阵
 
@@ -713,14 +719,196 @@ GET https://oss.consumer.doc2x.noedgeai.com/convert/cv_d80ov9k91nqc73f3emtg
 
 ### 3. 仍待补证据的点
 
-当前还没有单独切换并验证这些导出选项的“非默认值”：
+当前还没有单独切换并验证这些导出选项：
+
+- `formula_level` 的非默认取值请求映射
+- `图片来源 在线图床` 的真实 HTTP 请求映射
+- `清除注释信息`
+- `代码缩进兼容性增强`
+- `formula_mode` 除 `"normal"` / `"dollar"` 外的其它取值
+
+已经补齐真实请求证据、可以进入 MCP 的导出参数是：
+
+- `formula_mode = "dollar"`（仅 Markdown）
+- `merge_cross_page_forms = true`（Markdown / LateX / Word）
+
+所以当前这些项应拆开看：
 
 - `merge_cross_page_forms = true`
-- `formula_mode` 的其它取值
-- `formula_level` 的其它取值
-- `图片来源` 的其它取值
+  - 已验证，可进入 MCP
+- `formula_mode = "dollar"`
+  - 已验证，可进入 MCP
+- `formula_level` 非默认值、`图片来源` 变体、以及其附带开关
+  - 仍然只是“网页已观察到，但尚未抓到可靠请求映射”的状态
 
-所以这些项虽然在网页中可见，但目前只适合作为“已观察到的 UI 表面”，还不该当成正式 MCP 输入参数。
+### 4. 对剩余两项的后续浏览器实证
+
+为缩小剩余不确定性，又补做了两轮浏览器实验：
+
+1. `formula_level` 非默认值
+   - 在当前 live 网页里，Markdown 本地图片路径没有再暴露 `退化公式级别` 控件，证据见：
+     - `/tmp/doc2x-local-formula-ui.json`
+   - 但 Word 导出弹窗里真实观察到了该控件与两个非默认项：
+     - `行内公式变为普通文本`
+     - `全部公式变为普通文本`
+   - 对应 UI 证据见：
+     - `/tmp/doc2x-word-formula-level-options.json`
+     - `/tmp/doc2x-word-formula-level-options.json.png`
+   - 之后又尝试通过自动化分别点击这两个选项并继续导出：
+     - `/tmp/doc2x-word-formula-inline-text.json`
+     - `/tmp/doc2x-word-formula-all-text.json`
+   - 两次都成功坐实了“选项文本真实存在”，但在当前自动化路径里没有继续进入 `CreateConvertParseTask`，因此仍然**没有拿到可靠的请求字段映射**。
+
+2. `图片来源 = 在线图床`
+   - 重新打开导出弹窗后，当前 live UI 证据见：
+     - `/tmp/doc2x-after-topbar-click.png`
+   - 页面上真实可见的额外项为：
+     - `清除注释信息`
+     - `代码缩进兼容性增强`
+   - 然后对弹窗里的真实 `导 出` 按钮执行点击抓包，证据见：
+     - `/tmp/doc2x-capture-image-host-submit.json`
+   - 该次请求里只观察到：
+     - `GetObjectParseResult`
+     - 前端埋点上报
+   - **没有**观察到：
+     - `CreateConvertParseTask`
+     - `GetConvertTaskStatus`
+     - `/convert/<id>` 下载 URL
+
+因此，这两项当前更准确的状态不是“还没来得及看”，而是：
+
+- `formula_level` 非默认值
+  - 当前只在 Word 导出弹窗里观察到两个非默认值
+  - 但仍未抓到可靠请求映射，暂时不能进入正式 MCP
+- `图片来源 = 在线图床`
+  - UI 与附带开关可见
+  - 但在真实提交实验中，没有进入当前已验证的 HTTP 导出链路
+
+### 4.1 图片来源语义实证
+
+为了确认“`在线图床` 到底是不是让导出的 Markdown 保留远程图片 URL”，又额外构造并验证了一份包含真实位图图片的 PDF：
+
+- SVG 样本：`/tmp/doc2x-raster-figure.svg`
+- 生成后的位图：`/tmp/doc2x-raster-figure.png`
+- 最终测试 PDF：`/tmp/doc2x-raster-test.pdf`
+
+对这份 PDF 的真实 parse 结果，`GetObjectParseResult` 返回的 `layout_response.pages[0].md` 明确包含远程图片：
+
+```html
+<img src="https://cdn.noedgeai.com/bo_d80uelk91nqc7388tjm0_0.jpg?x=123&y=324&w=1527&h=815&r=0"/>
+```
+
+也就是说，Doc2X 的**原始 parse 结果层**本来就是远程图片 URL。
+
+随后又分别验证了两条导出路径：
+
+1. `图片来源 = 本地图片`
+   - 使用 MCP 对同一个 parse 结果执行默认 Markdown 导出
+   - 输出文件：`/tmp/doc2x-raster-local.zip`
+   - 压缩包结构：
+     - `doc2x-raster-local.md`
+     - `images/0_123_324_1527_815_0.jpg`
+     - `images/bo_d80uelk91nqc7388tjm0_0_123_324_1527_815_0.jpg`
+   - 导出的 Markdown 内容为：
+
+```markdown
+![0_123_324_1527_815_0.jpg](images/0_123_324_1527_815_0.jpg)
+```
+
+这证明默认“本地图片”语义是：
+
+- 走 `CreateConvertParseTask -> GetConvertTaskStatus -> /convert/<id>` 链路
+- 下载 zip 包
+- 将远程图片**本地化**为 `images/` 目录中的文件
+- Markdown 里改写成相对路径引用
+
+2. `图片来源 = 在线图床`
+   - 在真实网页导出弹窗中切到 `在线图床`
+   - 当前弹窗状态证据：
+     - `/tmp/doc2x-online-host-dialog-state.png`
+   - 点击紫色 `导 出` 按钮后的全量抓包：
+     - `/tmp/doc2x-capture-all-export.json`
+   - 该次点击只看到：
+     - `POST /gateway.v1.SpaceService/GetObjectParseResult`
+   - 没有看到：
+     - `CreateConvertParseTask`
+     - `GetConvertTaskStatus`
+     - `/convert/<id>`
+   - 但浏览器 `Downloads/` 目录里真实新增了：
+     - `/home/oliviero/Downloads/doc2x-raster-test-20260511223127.md`
+     - `/home/oliviero/Downloads/doc2x-raster-test-20260511223348.md`
+   - 这两个文件内容一致，均保留远程图片：
+
+```html
+<img src="https://cdn.noedgeai.com/bo_d80uelk91nqc7388tjm0_0.jpg?x=123&y=324&w=1527&h=815&r=0"/>
+```
+
+因此，这轮可以把“图片来源”两种模式的语义彻底坐实：
+
+- `本地图片`
+  - 服务器 convert 链路
+  - zip 包
+  - `images/` 目录
+  - Markdown 使用相对路径图片引用
+- `在线图床`
+  - 浏览器直接基于 `GetObjectParseResult` 生成 `.md` 下载
+  - 不走当前已验证的 convert HTTP 链路
+  - Markdown 保留 `cdn.noedgeai.com` 远程图片 URL
+
+这也解释了为什么前面在 `在线图床` 状态下一直抓不到 `CreateConvertParseTask`：这条流本身就不是当前 MCP 已实现的 convert 下载路径。
+
+### 4.2 `merge_cross_page_forms = true` 的 LateX / Word 实证
+
+为确认 `merge_cross_page_forms = true` 不是只在 Markdown 路径中成立，又对跨页表格样本
+
+- `/tmp/doc2x-cross-table-test.pdf`
+
+分别执行了 LateX 与 Word 导出，并抓到了真实请求：
+
+- LateX 证据：
+  - `/tmp/doc2x-table-latex-merge-true.json`
+  - 关键 payload：
+
+```json
+{
+  "parse_id": "op_d80va62lb0pc73810fmg",
+  "formula_mode": "normal",
+  "convert_to": 2,
+  "filename": "doc2x-cross-table-test",
+  "merge_cross_page_forms": true,
+  "formula_level": 0
+}
+```
+
+- Word 证据：
+  - `/tmp/doc2x-table-word-merge-true.json`
+  - 关键 payload：
+
+```json
+{
+  "parse_id": "op_d80va62lb0pc73810fmg",
+  "formula_mode": "normal",
+  "convert_to": 3,
+  "filename": "doc2x-cross-table-test",
+  "merge_cross_page_forms": true,
+  "formula_level": 0
+}
+```
+
+随后又使用当前 MCP 对同一个 `taskId = op_d80va62lb0pc73810fmg` 做默认/开启两组导出比对，结果如下：
+
+| 格式 | `merge_cross_page_forms` | 输出文件 | 字节数 | SHA-256 |
+| --- | --- | --- | --- | --- |
+| LateX | `false` | `/tmp/doc2x-latex-default.zip` | `2455` | `0809760ae00d1666acc900abd81cef0858fd7edb2c53d9e3c632e43a1cf83c69` |
+| LateX | `true` | `/tmp/doc2x-latex-merge.zip` | `2527` | `cf9efae1735ae33750e866c09c55aa12fc579c48006e88bcb012c7d0ec7bc88a` |
+| Word | `false` | `/tmp/doc2x-word-default.docx` | `14733` | `2d707e2690a075b768d7644ee00ff08666194180fd802123f423040168816f97` |
+| Word | `true` | `/tmp/doc2x-word-merge.docx` | `14667` | `f3e5f3d1350ff85ac74164317bafa9ccf62547a210264eb28e966ccc01698384` |
+
+这说明：
+
+- `merge_cross_page_forms = true` 在 LateX / Word 的真实网页请求中都存在
+- 当前 MCP 已能成功跑通这两条导出路径
+- 默认版与开启版产物在大小和哈希上都发生了变化，差异不是伪参数
 
 ## 七、直接结论
 
@@ -745,12 +933,29 @@ GET https://oss.consumer.doc2x.noedgeai.com/convert/cv_d80ov9k91nqc73f3emtg
    - `LateX -> convert_to = 2 -> application/zip`
    - `Word -> convert_to = 3 -> application/vnd.openxmlformats-officedocument.wordprocessingml.document`
 
-6. `HTML / PDF(HTML) / 导出到MD编辑器` 仍未进入正式 HTTP 导出能力范围。
+6. 已补充验证的 Markdown 导出变体包括：
+   - `formula_mode = "dollar"`
+   - `merge_cross_page_forms = true`
 
-7. 因此后续 MCP 扩展最稳的顺序应为：
-   - 让 `doc2x_parse_pdf` 正式开放已验证的 `parseVersion = 0 | 3`
-   - 把 `doc2x_export_parse_result` 扩展到 `markdown / latex / word`
-   - 再继续逐项补抓 HTML、PDF(HTML)、编辑器流和导出参数变体
+7. `merge_cross_page_forms = true` 已补充验证到三种正式导出格式：
+   - `Markdown`
+   - `LateX`
+   - `Word`
+
+8. `formula_level` 的两个 Word UI 选项
+   - `行内公式变为普通文本`
+   - `全部公式变为普通文本`
+   已经在 live 网页中观察到，但还没有拿到可靠请求映射，因此仍不能进入正式 MCP。
+
+9. `HTML / PDF(HTML) / 导出到MD编辑器` 仍未进入正式 HTTP 导出能力范围。
+
+10. 因此后续 MCP 扩展最稳的顺序应为：
+   - 保持 `doc2x_parse_pdf` 的正式输入边界为已验证的 `parseVersion = 0 | 3`
+   - 在 `doc2x_export_parse_result` 中正式开放：
+     - `markdown / latex / word`
+     - `formulaMode = "normal" | "dollar"`（Markdown）
+     - `mergeCrossPageForms`（当前真实验证到 `markdown / latex / word`）
+   - 再继续逐项补抓 HTML、PDF(HTML)、编辑器流、`formula_level` 非默认值和图片来源变体
 
 ## 八、正式能力证据矩阵
 
@@ -786,10 +991,16 @@ GET https://oss.consumer.doc2x.noedgeai.com/convert/cv_d80ov9k91nqc73f3emtg
 | `convert_to = 2` | 已确认 | 已验证 | 是，对应 LateX |
 | `convert_to = 3` | 已确认 | 已验证 | 是，对应 Word |
 | `filename` | 已确认 | 已验证 | MCP 内部使用，可由输出文件名派生 |
-| `formula_mode = "normal"` | 已确认默认值，适用于 Markdown/LateX/Word | 默认值已验证，改值未验证 | 先内部固定 |
-| `merge_cross_page_forms = false` | 已确认默认值，适用于 Markdown/LateX/Word | 默认值已验证，改值未验证 | 先内部固定 |
-| `formula_level = 0` | 已确认默认值，适用于 Markdown/LateX/Word | 默认值已验证，改值未验证 | 先内部固定 |
-| `图片来源 本地图片` | 页面可见 | 未验证 | 否 |
+| `formula_mode = "normal"` | 已确认默认值，适用于 Markdown/LateX/Word | 默认值已验证 | 是，当前可作为 Markdown 导出默认值 |
+| `formula_mode = "dollar"` | 已确认非默认值，适用于 Markdown | 已验证 | 是，但当前只应在 Markdown 导出中开放 |
+| `merge_cross_page_forms = false` | 已确认默认值，适用于 Markdown/LateX/Word | 默认值已验证 | 是 |
+| `merge_cross_page_forms = true` | 已确认非默认值，适用于 Markdown/LateX/Word | 已验证 | 是 |
+| `formula_level = 0` | 已确认默认值，适用于 Markdown/LateX/Word | 默认值已验证 | 先内部固定 |
+| `formula_level != 0` | 当前仅在 Word 弹窗中观察到 `行内公式变为普通文本 / 全部公式变为普通文本`，未抓到真实请求 | 未验证 | 否 |
+| `图片来源 本地图片` | 已确认：默认 Markdown 导出走 convert 链路，zip 内含 `images/` 目录，Markdown 改写为相对路径图片引用 | 默认语义已验证 | 先内部固定默认（Markdown） |
+| `图片来源 在线图床` | 已确认：点击导出后只请求 `GetObjectParseResult`，浏览器直接下载 `.md`，其中保留 `cdn.noedgeai.com` 远程图片 URL | 语义已验证，但不是当前 HTTP convert 链路 | 否，若要支持需单独实现 browser-backed flow |
+| `清除注释信息` | 仅在 `在线图床` 变体中观察到 | 未验证 | 否 |
+| `代码缩进兼容性增强` | 仅在 `在线图床` 变体中观察到 | 未验证 | 否 |
 
 ### 7.4 下载产物矩阵
 

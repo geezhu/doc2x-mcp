@@ -24,6 +24,10 @@ import {
 } from "./doc2x/endpoints.js";
 import { importBrowserSession } from "./doc2x/browserSession.js";
 import { getBrowserFallbackPlan } from "./doc2x/browserFallback.js";
+import {
+  getParseStatusViaHttp,
+  parsePdfViaHttp
+} from "./doc2x/parseWorkflow.js";
 import { safeJsonStringify } from "./utils/json.js";
 
 const stringMapSchema = z.record(z.string(), z.string());
@@ -308,6 +312,44 @@ export function createServer(client = new Doc2xClient()): McpServer {
   );
 
   server.registerTool(
+    "doc2x_parse_pdf",
+    {
+      description:
+        "Parse a single local PDF through the Doc2X web subscription flow using pure HTTP, waiting until the task finishes or times out.",
+      inputSchema: {
+        filePath: z.string(),
+        timeoutMs: z.number().int().positive().optional()
+      }
+    },
+    async ({ filePath, timeoutMs }) =>
+      withToolErrorHandling("Doc2X parse PDF", async () => {
+        return parsePdfViaHttp(client, {
+          filePath,
+          timeoutMs
+        });
+      })
+  );
+
+  server.registerTool(
+    "doc2x_get_parse_status",
+    {
+      description:
+        "Fetch a parse task snapshot by taskId or objectId. If the parse is complete, also enrich the response with object and parse result metadata.",
+      inputSchema: {
+        taskId: z.string().optional(),
+        objectId: z.string().optional()
+      }
+    },
+    async ({ taskId, objectId }) =>
+      withToolErrorHandling("Doc2X parse status", async () => {
+        return getParseStatusViaHttp(client, {
+          taskId,
+          objectId
+        });
+      })
+  );
+
+  server.registerTool(
     "doc2x_create_task",
     {
       description:
@@ -409,7 +451,12 @@ export function createServer(client = new Doc2xClient()): McpServer {
         filePath: z.string().optional(),
         fileFieldName: z.string().optional(),
         fileContentType: z.string().optional(),
-        formFields: stringMapSchema.optional()
+        formFields: stringMapSchema.optional(),
+        includeSessionAuth: z.boolean().optional(),
+        includeSessionCookies: z.boolean().optional(),
+        allowRefresh: z.boolean().optional(),
+        originOverride: z.string().nullable().optional(),
+        refererOverride: z.string().nullable().optional()
       }
     },
     async (input) =>

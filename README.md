@@ -28,8 +28,13 @@ The first version is HTTP-first:
   - `CreateParseTask`
   - `GetTaskStatus` polling
   - `GetObjectParse`, `GetObjectParseList`, `GetObjectParseResult`, and `GetSpaceObject` enrichment
+- Browser-verified `parseVersion` exposure on `doc2x_parse_pdf` for both verified PDF parser variants
 - Parse status recovery by `taskId` or `objectId`
 - Markdown result consumption by `taskId` or `objectId`, including optional local `.md` export
+- Browser-verified web export flow for the currently confirmed formats:
+  - `CreateConvertParseTask`
+  - `GetConvertTaskStatus`
+  - download from the returned convert URL to a local absolute path
 - Session import / update / clear
 - Password login, SMS-code login, SMS-code request
 - Profile, quota, subscription, and product list lookup
@@ -58,6 +63,7 @@ The first version is HTTP-first:
 - `doc2x_parse_pdf`
 - `doc2x_get_parse_status`
 - `doc2x_get_parse_markdown`
+- `doc2x_export_parse_result`
 - `doc2x_create_task`
 - `doc2x_space_operation`
 - `doc2x_pay_operation`
@@ -103,7 +109,7 @@ The current implementation deliberately freezes scope to the first executable sl
 - Default web parse configuration
 - Structured result with normalized `task/object/result metadata`, plus `raw` snapshots for debugging
 
-`doc2x_parse_pdf` follows the request sequence recovered from the live web bundles:
+`doc2x_parse_pdf` follows the request sequence recovered from live logged-in browser traffic:
 
 1. `GET /v2/user/profile`
 2. `POST /gateway.v1.TaskService/CreateUploadTask` with `{ "filename": "<name>.pdf" }`
@@ -129,12 +135,75 @@ The current implementation deliberately freezes scope to the first executable sl
 
 The merged Markdown preserves explicit page boundaries with markers such as `<!-- page: 1 -->`, keeps empty pages, and surfaces parse-result anomalies through warnings instead of silently dropping them.
 
+The parse tool now formally exposes the only parse request parameter that is currently browser-verified:
+
+- `parseVersion`
+  - currently `0` and `3` are accepted as formal input values
+  - verified `doc2x-v3-2509-beta` behavior:
+    - `{"source_id":"...","parse_version":3}`
+  - verified `doc2x-v2-2410` behavior:
+    - `{"source_id":"..."}`
+    - and the resulting `GetObjectParseList.parse_param.parse_version` is `0`
+  - other parse-dialog options are not yet exposed until they are captured and re-validated from real browser traffic
+
+## Verified Export Workflow
+
+`doc2x_export_parse_result` is the browser-parity export tool for completed parse results.
+
+Current verified scope:
+
+- accepts `taskId` or `objectId`
+- resolves `parseId` internally
+- runs:
+  - `CreateConvertParseTask`
+  - `GetConvertTaskStatus`
+  - `GET <convert url>`
+- writes the downloaded artifact to a local absolute `outputPath`
+- returns structured metadata including:
+  - `taskId`
+  - `objectId`
+  - `parseId`
+  - `exportTaskId`
+  - `downloadUrl`
+  - `outputPath`
+  - `wroteFile`
+  - `contentType`
+  - `byteLength`
+  - `warnings`
+
+Current formally supported export formats:
+
+- `markdown`
+  - verified browser payload:
+    - `{"parse_id":"...","formula_mode":"normal","convert_to":1,"filename":"doc2x-test","merge_cross_page_forms":false,"formula_level":0}`
+  - verified downloaded artifact type:
+    - `application/zip`
+  - because the confirmed browser download is a zip package, `outputPath` currently must end in `.zip`
+- `latex`
+  - verified browser payload:
+    - `{"parse_id":"...","formula_mode":"normal","convert_to":2,"filename":"doc2x-test","merge_cross_page_forms":false,"formula_level":0}`
+  - verified downloaded artifact type:
+    - `application/zip`
+  - the verified artifact is a zip package, so `outputPath` must end in `.zip`
+- `word`
+  - verified browser payload:
+    - `{"parse_id":"...","formula_mode":"normal","convert_to":3,"filename":"doc2x-test","merge_cross_page_forms":false,"formula_level":0}`
+  - verified downloaded artifact type:
+    - `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+  - the verified artifact is a `.docx` file, so `outputPath` must end in `.docx`
+
+This is intentionally narrower than the full web dialog. Formats and options such as `HTML`, `PDF(HTML)`, `merge_cross_page_forms=true`, alternate formula settings, or image-source variants are not yet exposed until they are individually captured and validated from real browser requests.
+
 Confirmed live behaviors from the first successful end-to-end run:
 
 - Current gateway responses use `code: "success"` plus snake_case payload keys such as `output_id`, `form_data`, `object_parse_list`, and `object_id`
 - The first `CreateParseTask` immediately after upload can transiently return `404 not_found`; the MCP retries this step automatically before failing
 - A real parse result was validated with a one-page local PDF and returned Markdown content from `GetObjectParseResult`
 - The Markdown result consumer was validated against the same fresh parse task and wrote a local `.md` file whose content exactly matched the returned `markdown` field
+- A real browser-parity export run was validated against the same parse result and downloaded a zip artifact through `CreateConvertParseTask -> GetConvertTaskStatus -> convert URL`
+- Additional browser-verified export runs confirmed:
+  - `LateX -> convert_to = 2 -> application/zip`
+  - `Word -> convert_to = 3 -> application/vnd.openxmlformats-officedocument.wordprocessingml.document`
 
 ## Known Gaps
 
@@ -142,7 +211,7 @@ Confirmed live behaviors from the first successful end-to-end run:
 - This phase intentionally excludes translate, image parse, PPT / drawing-board, online-save integrations, and batch orchestration.
 - PPT generator and drawing-board editing appear to rely on browser-local state.
 - Third-party online-save flows may require OAuth/browser handoff.
-- The parse workflow currently defaults to `parseVersion: 3` (`doc2x-v3-2509-beta`) based on live UI, bundle analysis, and a successful end-to-end MCP run; the exact request payload was still inferred rather than copied from a browser network log.
+- Only browser-verified parse/export parameters are formal MCP inputs. The rest of the visible web dialog remains intentionally unimplemented until captured with real browser evidence.
 
 ## Development
 

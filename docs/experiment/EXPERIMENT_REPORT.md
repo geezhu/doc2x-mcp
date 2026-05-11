@@ -15,6 +15,8 @@
 - 打通单文件本地 PDF 的完整解析链路
 - 在 MCP 中暴露高层工具 `doc2x_parse_pdf` 与 `doc2x_get_parse_status`
 - 在解析完成后补齐 Markdown 结果消费能力 `doc2x_get_parse_markdown`
+- 基于真实网页抓包补齐已验证的 `parseVersion` 参数
+- 新增网页同款导出工具 `doc2x_export_parse_result`
 - 通过真实订阅账号和测试 PDF 完成一次端到端验证
 - 编写可重复执行的 MCP 验证脚本
 
@@ -74,6 +76,19 @@
   - 提取合并后的 Markdown 正文
   - 返回页级 `pages` 明细
   - 可选写出本地 `.md` 文件
+- `doc2x_export_parse_result({ taskId?, objectId?, exportFormat?, outputPath })`
+  - 执行真实网页导出链路
+  - 轮询 convert 任务
+  - 下载最终导出产物到本地文件
+
+当前正式支持的新增参数/格式严格受浏览器证据约束：
+
+- `doc2x_parse_pdf.parseVersion`
+  - 当前接受已抓包确认的 `0 | 3`
+- `doc2x_export_parse_result.exportFormat`
+  - 当前仅接受已抓包确认的 `markdown / latex / word`
+  - `markdown` 与 `latex` 当前下载到本地的是 zip 包
+  - `word` 当前下载到本地的是 `.docx`
 
 同时保留调试逃生舱：
 
@@ -127,6 +142,7 @@
   - 验证 `doc2x_parse_pdf`
   - 验证 `doc2x_get_parse_status`
   - 验证 `doc2x_get_parse_markdown`
+  - 验证 `doc2x_export_parse_result`
   - 验证落盘文件与返回 Markdown 全文完全一致
 
 脚本入口：
@@ -202,7 +218,7 @@ npm run verify:mcp
 ```text
 [verify-mcp] Connecting in-memory MCP client and server
 [verify-mcp] Listing tools
-[verify-mcp] Found 19 tools
+[verify-mcp] Found 20 tools
 [verify-mcp] Calling doc2x_surface_catalog
 [verify-mcp] Calling doc2x_browser_fallback_plan
 [verify-mcp] Calling doc2x_session_get
@@ -242,6 +258,7 @@ npm run verify:mcp -- --online --pdf /tmp/doc2x-test.pdf
 [verify-mcp] Calling doc2x_parse_pdf
 [verify-mcp] Calling doc2x_get_parse_status
 [verify-mcp] Calling doc2x_get_parse_markdown
+[verify-mcp] Calling doc2x_export_parse_result
 [verify-mcp] Verification passed
 ```
 
@@ -264,6 +281,15 @@ npm run verify:mcp -- --online --pdf /tmp/doc2x-test.pdf
 4. 落盘一致性检查
    - 读取 `/tmp/doc2x-verify-output.md`
    - 断言文件全文与 `markdownResult.markdown` 完全一致
+5. `doc2x_export_parse_result`
+   - `ok === true`
+   - `status === "success"`
+   - `exportFormat === "markdown"`
+   - `downloadUrl` 为非空字符串
+   - `wroteFile === true`
+   - `outputPath === "/tmp/doc2x-verify-export.zip"`
+   - 导出文件非空，且文件头为 `PK`
+   - `byteLength` 与真实落盘文件大小一致
 
 也就是说，本次验证已经覆盖了“新鲜任务链路 -> Markdown 消费 -> 本地 `.md` 导出 -> 文件内容一致性”这一整条新增能力，而不是只验证工具名称存在。
 
@@ -276,8 +302,85 @@ npm run verify:mcp -- --online --pdf /tmp/doc2x-test.pdf
 - `doc2x_parse_pdf` 成功完成 PDF 上传、建任务、轮询和结果补查
 - `doc2x_get_parse_status` 成功返回完成态与解析元数据
 - `doc2x_get_parse_markdown` 成功返回 Markdown 正文、页级明细，并成功落盘到本地 `.md` 文件
+- `doc2x_export_parse_result` 成功执行网页同款导出链路，并成功落盘已验证格式产物
 
-### 7.4 真实解析结果
+### 7.4 浏览器证据驱动的新增能力
+
+本轮实现不是继续“推断网页行为”，而是直接基于 `docs/analysis/doc2x-parse-browser-analysis-2026-05-11.md` 中的真实浏览器证据落地：
+
+- `CreateParseTask` 的真实请求已确认包含：
+  - `source_id`
+  - `parse_version = 3`
+- 进一步的真实网页切换又确认：
+  - 选择 `doc2x-v2-2410` 后，`CreateParseTask` 会省略 `parse_version`
+  - 但后续 `GetObjectParseList.parse_param.parse_version = 0`
+- `parse_model = 3` 当前只在结果元数据中出现，因此没有进入正式 MCP schema
+- 默认网页导出已确认走：
+  - `CreateConvertParseTask`
+  - `GetConvertTaskStatus`
+  - `GET convert URL`
+- 默认网页导出请求已确认包含：
+  - `parse_id`
+  - `formula_mode = "normal"`
+  - `convert_to = 1`
+  - `filename`
+  - `merge_cross_page_forms = false`
+  - `formula_level = 0`
+- 默认网页导出下载产物 MIME 已确认是：
+  - `application/zip`
+- 补充浏览器抓包又进一步确认了两种格式：
+  - `LateX -> convert_to = 2 -> application/zip`
+  - `Word -> convert_to = 3 -> application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+- 同时也确认了解析弹窗中的：
+  - `页码范围`
+  - `下次解析不再显示`
+  当前仍只具备“UI 可见”证据，尚未确认它们进入真实请求 payload
+
+因此，这轮实现新增的正式接口边界被收束为：
+
+- `doc2x_parse_pdf`：正式开放 `parseVersion = 0 | 3`
+- `doc2x_export_parse_result`：正式开放 `exportFormat = "markdown" | "latex" | "word"`
+  - `markdown` 输出为本地 zip 文件
+  - `latex` 输出为本地 zip 文件
+  - `word` 输出为本地 `.docx` 文件
+
+其它解析弹窗项和其它导出格式仍然保留在“网页可见但未正式进入 MCP”的状态，等待后续逐项抓包验证。
+
+### 7.4.1 补充浏览器格式映射证据
+
+在后续补充抓包中，又额外验证了两种真实网页导出格式：
+
+- `LateX`
+  - `CreateConvertParseTask` 请求体：
+    - `{"parse_id":"...","formula_mode":"normal","convert_to":2,"filename":"doc2x-test","merge_cross_page_forms":false,"formula_level":0}`
+  - 最终下载响应 MIME：
+    - `application/zip`
+- `Word`
+  - `CreateConvertParseTask` 请求体：
+    - `{"parse_id":"...","formula_mode":"normal","convert_to":3,"filename":"doc2x-test","merge_cross_page_forms":false,"formula_level":0}`
+  - 最终下载响应 MIME：
+    - `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+
+同时，针对解析弹窗也补做了一次输入面验证。当前已确认网页 UI 中确实存在：
+
+- 文件名输入显示
+- 页码范围输入框
+- `下次解析不再显示` 复选框
+
+但在当前抓到的真实请求中，仍然只明确看到：
+
+- `CreateUploadTask.filename`
+- `CreateParseTask.source_id`
+- `CreateParseTask.parse_version = 3`
+
+后续补充浏览器验证又进一步确认：
+
+- 选择 `doc2x-v2-2410` 时，`CreateParseTask` 真实请求中不会显式发送 `parse_version = 0`
+- 但最终 `GetObjectParseList.parse_param.parse_version` 会真实落成 `0`
+
+因此页码范围和复选框目前仍然只具备“UI 可见”证据，而不是“已确认请求参数”。
+
+### 7.5 真实解析结果
 
 一次真实解析已成功完成，返回结果中包含：
 
@@ -403,7 +506,110 @@ Doc2X MCP PDF Test This is a one-page sample.
 - 返回体中的 `markdown` 与本地真实落盘文件逐字一致
 - 新增修改的核心能力“结果消费 + 本地 `.md` 导出”已经被真实会话再次验证
 
-### 7.5 多页 PDF 验证
+### 7.6 网页同款导出验证
+
+在新增导出工具后，本次还基于真实网页登录会话和同一份测试 PDF 补做了一轮网页同款导出验证。
+
+真实浏览器抓包已确认默认导出请求为：
+
+```json
+{
+  "parse_id": "op_d80oor2lb0pc7385hfg0",
+  "formula_mode": "normal",
+  "convert_to": 1,
+  "filename": "doc2x-test",
+  "merge_cross_page_forms": false,
+  "formula_level": 0
+}
+```
+
+对应真实下载结果的关键证据为：
+
+- `mimeType = "application/zip"`
+- `content-length = "317"`（浏览器抓包样本）
+
+本轮 MCP 验证脚本新增导出断言后，会将结果写到：
+
+- `/tmp/doc2x-verify-export.zip`
+
+导出工具成功态需要同时满足：
+
+- convert 任务完成
+- 返回非空 `downloadUrl`
+- 本地 zip 文件真实写出
+- 落盘文件非空
+- 文件头为 `PK`
+- 返回的 `byteLength` 与真实文件大小一致
+
+因此，这一阶段已经不仅能“取回 parse 结果”，还能够沿着真实网页导出链路拿到最终下载产物。
+
+为避免报告停留在“脚本通过”的层面，本次还额外采集了一轮当前修改版本的真实 MCP 返回值。该轮证据采集的关键结果如下：
+
+```json
+{
+  "parseResult": {
+    "ok": true,
+    "taskId": "op_d80pepc91nqc73f3f7e0",
+    "parseId": "op_d80pepc91nqc73f3f7e0",
+    "objectId": "019e1637-6b06-7135-9c0d-3b83beb3e0c4",
+    "parseVersion": 3,
+    "status": "success",
+    "rawStatus": 2,
+    "progress": 100,
+    "parseParam": {
+      "parse_model": 3,
+      "parse_version": 3,
+      "model": 7
+    }
+  },
+  "exportResult": {
+    "ok": true,
+    "taskId": "op_d80pepc91nqc73f3f7e0",
+    "parseId": "op_d80pepc91nqc73f3f7e0",
+    "objectId": "019e1637-6b06-7135-9c0d-3b83beb3e0c4",
+    "exportTaskId": "cv_d80peq491nqc73f3f7f0",
+    "exportFormat": "markdown",
+    "status": "success",
+    "rawStatus": 2,
+    "outputPath": "/tmp/doc2x-phase2-evidence.zip",
+    "wroteFile": true,
+    "downloadUrl": "https://oss.consumer.doc2x.noedgeai.com/convert/cv_d80peq491nqc73f3f7f0",
+    "contentType": "application/zip",
+    "byteLength": 339,
+    "warnings": []
+  }
+}
+```
+
+这轮额外证据说明：
+
+- `doc2x_parse_pdf` 返回的 `parseVersion = 3` 已经与真实上游元数据对齐
+- `doc2x_export_parse_result` 确实拿到了真实 `exportTaskId`
+- 导出返回的 `contentType` 为 `application/zip`
+- 工具返回了真实 `downloadUrl`，而不是本地伪造路径
+
+随后补做的网页模型切换验证又补上了另一半证据：
+
+- `PDF 解析模型` 在真实网页中可从 `doc2x-v3-2509-beta` 切到 `doc2x-v2-2410`
+- 切到 `doc2x-v2-2410` 后，真实 `CreateParseTask` 请求为：
+  - `{"source_id":"..."}`
+- 对应结果元数据真实返回：
+  - `parse_param.parse_version = 0`
+  - `parse_param.parse_model = 3`
+  - `parse_param.model = 6`
+
+这说明当前 MCP 中 `parseVersion = 0` 已经不是代码候选值，而是网页实证值。
+
+导出落盘文件的可核对结果如下：
+
+- 输出文件路径：`/tmp/doc2x-phase2-evidence.zip`
+- 文件大小：`339 bytes`
+- 文件头魔数：`504b0304`
+- `sha256`：`f4dbc388e0848588dd428c33f422c07e9fad15c01c45607a77aff27fdfba9835`
+
+这意味着当前默认网页 Markdown 导出，在 MCP 里已经被真实验证为“zip 包下载链路”，而不是裸 `.md` 文件写出。
+
+### 7.7 多页 PDF 验证
 
 为补强“分页逻辑已被真实验证”的证据，本次又专门构造并验证了一份 3 页测试 PDF。
 
@@ -555,29 +761,43 @@ Doc2X Multi Page Test - Page 3
 }
 ```
 
-这表明当前 MCP 已经具备“获取解析结果”的能力，只是本阶段返回形式仍以结构化 JSON 和元数据为主，尚未进一步封装为独立的 `.md`、`.docx` 或 `.tex` 导出文件。
+这表明当前 MCP 不仅具备“获取解析结果”的能力，还已经具备两种分层结果消费方式：
+
+- `doc2x_get_parse_markdown`
+  - 直接返回正文与页级 Markdown
+- `doc2x_export_parse_result`
+  - 沿真实网页下载链路获取最终导出产物
 
 ## 8. 结论
 
-本实验成功完成了 Doc2X Subscription MCP 第一阶段目标，证明了以下结论：
+本实验成功完成了当前阶段的 Doc2X Subscription MCP 目标，证明了以下结论：
 
 - 基于网页登录会话导入，可以稳定驱动订阅端核心 API
 - 在运行时不依赖浏览器的前提下，可以完成单文件 PDF 的完整解析闭环
-- 真实订阅账号与真实 PDF 验证表明，该 MCP 已具备实际可用的 `PDF parse-only` 能力
+- 真实浏览器证据已经确认：
+  - `parseVersion = 3 -> CreateParseTask` 显式发送 `parse_version = 3`
+  - `parseVersion = 0 -> CreateParseTask` 省略 `parse_version`，但结果元数据真实落成 `parse_version = 0`
+- 真实浏览器证据已经确认：
+  - `Markdown -> convert_to = 1 -> application/zip`
+  - `LateX -> convert_to = 2 -> application/zip`
+  - `Word -> convert_to = 3 -> application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+- 真实订阅账号与真实 PDF 验证表明，该 MCP 已具备实际可用的 `PDF parse + Markdown 消费 + 网页同款导出` 能力
 - 通过自动化验证脚本，项目已具备可重复验收手段
 
 ## 9. 不足与风险
 
-- 当前只覆盖 PDF parse-only，尚未进入翻译和图片解析链路
-- `parseVersion` 目前默认使用 `3`，虽已被成功联调验证，但仍建议后续继续抓取网页原始请求进一步固化证据
+- 当前只覆盖 PDF 主链路，尚未进入翻译和图片解析链路
+- 解析弹窗中的页码范围等项，当前仍停留在“网页可见但未正式验证”的状态
+- `HTML / PDF(HTML) / 导出到MD编辑器` 仍未形成稳定的 HTTP 导出证据
+- 当前网页 `Markdown / LateX` 导出下载到本地的是 zip 包；这与直觉中的“裸文本/源码文件”不同
 - 当前环境下的 stdio 子进程自检存在限制，未来若进入 CI 或不同宿主环境，需要再次确认 stdio 模式行为
 
 ## 10. 后续工作建议
 
 建议下一阶段按以下顺序推进：
 
-1. 固化 `translate` 链路
-2. 增加术语表相关工具
-3. 继续补齐更多解析参数分支
-4. 评估图片解析是否能沿用当前 HTTP 工作流
+1. 继续逐项抓取解析弹窗，确认页码范围等参数是否真正进入请求 payload
+2. 继续逐项抓取下载弹窗，确认 `HTML / PDF(HTML) / 导出到MD编辑器` 的真实链路
+3. 在 HTML/PDF/编辑器链路验证完成后，再扩展 `doc2x_export_parse_result` 的正式格式枚举
+4. 之后再进入 `translate`、术语表与图片解析链路
 5. 在更接近真实部署环境的场景下补做 stdio 端到端验证

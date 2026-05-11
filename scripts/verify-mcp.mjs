@@ -309,14 +309,43 @@ async function main() {
             contentType: "application/zip"
           },
           {
+            exportFormat: "markdown",
+            outputPath: "/tmp/doc2x-verify-export-dollar.zip",
+            contentType: "application/zip",
+            formulaMode: "dollar",
+            mergeCrossPageForms: true,
+            expectedCreateConvertPayload: {
+              formula_mode: "dollar",
+              merge_cross_page_forms: true
+            }
+          },
+          {
             exportFormat: "latex",
             outputPath: "/tmp/doc2x-verify-export-latex.zip",
             contentType: "application/zip"
           },
           {
+            exportFormat: "latex",
+            outputPath: "/tmp/doc2x-verify-export-latex-merge.zip",
+            contentType: "application/zip",
+            mergeCrossPageForms: true,
+            expectedCreateConvertPayload: {
+              merge_cross_page_forms: true
+            }
+          },
+          {
             exportFormat: "word",
             outputPath: "/tmp/doc2x-verify-export-word.docx",
             contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          },
+          {
+            exportFormat: "word",
+            outputPath: "/tmp/doc2x-verify-export-word-merge.docx",
+            contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            mergeCrossPageForms: true,
+            expectedCreateConvertPayload: {
+              merge_cross_page_forms: true
+            }
           }
         ];
 
@@ -327,6 +356,8 @@ async function main() {
           const exportResult = await callJsonTool(client, "doc2x_export_parse_result", {
             taskId: parseResult.taskId,
             exportFormat: exportCase.exportFormat,
+            formulaMode: exportCase.formulaMode,
+            mergeCrossPageForms: exportCase.mergeCrossPageForms,
             outputPath: exportCase.outputPath
           });
           assert.equal(exportResult.ok, true, `${exportCase.exportFormat} export should succeed`);
@@ -358,6 +389,22 @@ async function main() {
             writtenExport.length,
             `${exportCase.exportFormat} byteLength should match written file size`
           );
+          if (exportCase.expectedCreateConvertPayload) {
+            if (Object.hasOwn(exportCase.expectedCreateConvertPayload, "formula_mode")) {
+              assert.equal(
+                exportResult.raw?.createConvertPayload?.formula_mode,
+                exportCase.expectedCreateConvertPayload.formula_mode,
+                `${exportCase.exportFormat} advanced export should forward formula_mode`
+              );
+            }
+            if (Object.hasOwn(exportCase.expectedCreateConvertPayload, "merge_cross_page_forms")) {
+              assert.equal(
+                exportResult.raw?.createConvertPayload?.merge_cross_page_forms,
+                exportCase.expectedCreateConvertPayload.merge_cross_page_forms,
+                `${exportCase.exportFormat} advanced export should forward merge_cross_page_forms`
+              );
+            }
+          }
         }
       } else {
         logStep("Skipping online parse check because no --pdf argument was provided");

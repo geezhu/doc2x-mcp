@@ -34,6 +34,104 @@
 
 这说明后续浏览器抓包可以直接代表真实网页订阅端行为。
 
+## 一点五、一步式受管浏览器认证证据
+
+在新增 `doc2x_auth_browser` 之前，仓库里只有：
+
+- `doc2x_import_browser_session`
+- `doc2x_session_set`
+
+也就是说，原来只能“导入一个已经登录好的浏览器会话”，还不能像 `notebooklm-mcp` 那样把“启动浏览器 + 登录后自动导入”收成一个正式用户能力。
+
+这轮针对受管浏览器认证补做了两类真实验证：
+
+### A. 静默复用成功态
+
+调用条件：
+
+- `profileDir = /tmp/doc2x-monitorable-profile`
+- `debugPort = 9222`
+- 当前 `9222` 上已有真实已登录 Doc2X Chrome
+
+实际结果：
+
+```json
+{
+  "ok": true,
+  "authenticated": true,
+  "openedBrowser": false,
+  "reusedManagedProfile": true,
+  "timedOut": false,
+  "debugBaseUrl": "http://127.0.0.1:9222",
+  "profileDir": "/tmp/doc2x-monitorable-profile"
+}
+```
+
+真实捕获到的关键会话事实：
+
+- `hasBearerToken = true`
+- `hasRefreshToken = true`
+- `cookieCount = 4`
+- `cookieDomains = [".noedgeai.com"]`
+
+真实探活内容：
+
+- `GET /v2/user/profile`
+- `GET /v2/user/quota`
+- `GET /v2/user/subscription`
+- `GET /v2/product/list`
+
+结论：
+
+- 一步式工具在“已有活着的、带 DevTools 的已登录浏览器”场景下，可以做到**无新窗口、无手工二次导入**地直接完成认证。
+- 成功标准已经不是“抓到 cookie/token”，而是“导入后真实账户探活成功”。
+
+### B. 新 profile 可见浏览器超时态
+
+调用条件：
+
+- `profileDir = /tmp/doc2x-auth-timeout-profile`
+- `timeoutMs = 5000`
+- fresh profile，无预先登录态
+
+实际结果：
+
+```json
+{
+  "ok": false,
+  "authenticated": false,
+  "openedBrowser": true,
+  "reusedManagedProfile": false,
+  "timedOut": true,
+  "debugBaseUrl": "http://127.0.0.1:43047",
+  "profileDir": "/tmp/doc2x-auth-timeout-profile"
+}
+```
+
+结论：
+
+- 一步式工具在无登录态时，确实会自动进入“打开可见 Chrome/Chromium 让用户手动登录”的路径。
+- 如果在等待窗口内未完成登录，工具不会把这次调用作为协议错误，而是返回结构化超时结果。
+- 后续继续调用同一个工具即可沿着受管 profile 继续，而不是改走另一套工具。
+
+### C. 运行层补充发现
+
+实现和实测过程中还确认了两个必要行为：
+
+1. **显式 `debugPort` 应优先于受管状态文件**
+   - 否则当 profile 下残留上一次未完成认证的浏览器状态时，工具会错误地优先黏住旧端口。
+   - 现已调整为：如果调用时显式传了 `debugPort`，先探测这个端口。
+
+2. **受管 profile 需要清理陈旧 Chrome 单例锁文件**
+   - 真实报错：
+     - `Failed to create .../SingletonLock`
+     - `Failed to create a ProcessSingleton for your profile directory`
+   - 现已确认在“没有活着的受管浏览器”前提下，启动前应清理：
+     - `SingletonLock`
+     - `SingletonSocket`
+     - `SingletonCookie`
+     - `DevToolsActivePort`
+
 ## 二、真实 Parse 主链路
 
 ### 1. 页面交互顺序

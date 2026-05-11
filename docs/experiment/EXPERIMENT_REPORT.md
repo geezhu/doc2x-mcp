@@ -12,6 +12,7 @@
 本阶段目标如下：
 
 - 实现基于网页登录会话导入的 MCP 调用能力
+- 实现一步式受管浏览器认证能力 `doc2x_auth_browser`
 - 打通单文件本地 PDF 的完整解析链路
 - 在 MCP 中暴露高层工具 `doc2x_parse_pdf` 与 `doc2x_get_parse_status`
 - 在解析完成后补齐 Markdown 结果消费能力 `doc2x_get_parse_markdown`
@@ -65,6 +66,12 @@
 ### 4.2 MCP 工具设计
 
 本阶段交付三个核心工具：
+
+- `doc2x_auth_browser({ timeoutMs?, executablePath?, profileDir?, debugPort?, notes? })`
+  - 优先静默复用受管浏览器 profile
+  - 必要时自动打开可见 Chrome/Chromium
+  - 自动导入并探活浏览器会话
+  - 成功后重写 `.doc2x/session.json`
 
 - `doc2x_parse_pdf(filePath, timeoutMs?)`
   - 执行上传、建任务、轮询、结果补查
@@ -126,7 +133,31 @@
    - `GetObjectParseResult`
    - `GetSpaceObject`
 
-### 5.3 MCP 验证脚本实现
+### 5.3 一步式受管浏览器认证实现
+
+新增高层认证工具：
+
+- `doc2x_auth_browser`
+
+其内部工作流为：
+
+1. 解析受管 profile 路径
+2. 优先检查显式 `debugPort`
+3. 再检查受管 profile 的活动浏览器状态文件
+4. 如果有可用 DevTools 端点，直接导入浏览器会话并执行真实 API 探活
+5. 如果没有可用端点，先尝试 headless 静默复用该 profile
+6. 如果静默复用仍无法得到有效登录态，则启动可见 Chrome/Chromium
+7. 在等待窗口内循环：
+   - `importBrowserSession`
+   - `getAccountBundle` 探活
+8. 成功后用 `clearExisting = true` 写回 `.doc2x/session.json`
+
+该实现同时补了两个运行层细节：
+
+- 显式 `debugPort` 优先于受管状态文件
+- 在确认没有活动受管浏览器时，清理陈旧 Chrome `Singleton*` 锁文件
+
+### 5.4 MCP 验证脚本实现
 
 新增验证脚本：
 
@@ -218,10 +249,11 @@ npm run verify:mcp
 ```text
 [verify-mcp] Connecting in-memory MCP client and server
 [verify-mcp] Listing tools
-[verify-mcp] Found 20 tools
+[verify-mcp] Found 21 tools
 [verify-mcp] Calling doc2x_surface_catalog
 [verify-mcp] Calling doc2x_browser_fallback_plan
 [verify-mcp] Calling doc2x_session_get
+[verify-mcp] Calling doc2x_auth_browser
 [verify-mcp] Online checks skipped. Pass --online to verify session-backed APIs.
 [verify-mcp] Verification passed
 ```
@@ -233,6 +265,7 @@ npm run verify:mcp
 - `doc2x_surface_catalog` 可用
 - `doc2x_browser_fallback_plan` 可用
 - `doc2x_session_get` 可用
+- `doc2x_auth_browser` 已注册
 - `doc2x_get_parse_markdown` 已进入工具列表
 
 ### 7.3 MCP 在线验证
@@ -252,7 +285,9 @@ npm run verify:mcp -- --online --pdf /tmp/doc2x-test.pdf
 [verify-mcp] Calling doc2x_surface_catalog
 [verify-mcp] Calling doc2x_browser_fallback_plan
 [verify-mcp] Calling doc2x_session_get
+[verify-mcp] Calling doc2x_auth_browser
 [verify-mcp] Running online checks
+[verify-mcp] Calling doc2x_auth_browser
 [verify-mcp] Calling doc2x_request
 [verify-mcp] Calling doc2x_get_account_bundle
 [verify-mcp] Calling doc2x_parse_pdf
@@ -261,6 +296,39 @@ npm run verify:mcp -- --online --pdf /tmp/doc2x-test.pdf
 [verify-mcp] Calling doc2x_export_parse_result
 [verify-mcp] Verification passed
 ```
+
+在线验证中，`doc2x_auth_browser` 真实走通了“静默复用受管 profile”路径：
+
+- 输入：
+  - `profileDir = /tmp/doc2x-monitorable-profile`
+  - `debugPort = 9222`
+- 返回：
+  - `ok = true`
+  - `authenticated = true`
+  - `openedBrowser = false`
+  - `reusedManagedProfile = true`
+  - `timedOut = false`
+
+本次认证成功后，返回体中的 `persistedSession` 确认：
+
+- `hasBearerToken = true`
+- `hasRefreshToken = true`
+- `cookieCount = 4`
+- `cookieDomains = [".noedgeai.com"]`
+
+同时，额外人工联调还验证了一次“无登录态超时”路径：
+
+- 输入：
+  - `profileDir = /tmp/doc2x-auth-timeout-profile`
+  - `timeoutMs = 5000`
+- 返回：
+  - `ok = false`
+  - `authenticated = false`
+  - `openedBrowser = true`
+  - `reusedManagedProfile = false`
+  - `timedOut = true`
+
+这说明新工具不仅能成功复用已登录浏览器，也能在 fresh profile 下进入“打开可见浏览器等待用户登录”的恢复路径。
 
 这轮在线验证不是“只调用到成功为止”，而是脚本内显式做了以下断言：
 

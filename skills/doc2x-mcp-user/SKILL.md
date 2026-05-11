@@ -2,10 +2,10 @@
 name: doc2x-mcp-user
 description: >
   Use the Doc2X subscription MCP in
-  /home/oliviero/AgenticProjects/textbook/doc2x to import a real Doc2X web
-  session, parse local PDFs, fetch Markdown results, and export verified
-  result formats. Use when a user wants to operate the Doc2X MCP rather than
-  maintain it.
+  /home/oliviero/AgenticProjects/textbook/doc2x to authenticate through the
+  managed browser flow, parse local PDFs, fetch Markdown results, and export
+  verified result formats. Use when a user wants to operate the Doc2X MCP
+  rather than maintain it.
 ---
 
 # Doc2X MCP User
@@ -15,6 +15,7 @@ Use this skill when the task is to operate the existing Doc2X MCP as an end user
 ## What This Skill Covers
 
 - import an already logged-in Doc2X browser session
+- authenticate through a managed Doc2X browser profile in one step
 - parse one local PDF with `doc2x_parse_pdf`
 - fetch parse status with `doc2x_get_parse_status`
 - fetch Markdown text with `doc2x_get_parse_markdown`
@@ -81,6 +82,63 @@ These meanings apply across multiple Doc2X MCP tools.
 
 ### Session and login tools
 
+#### `doc2x_auth_browser`
+
+Recommended default authentication path.
+
+Use when the user wants the MCP to manage a dedicated Chrome/Chromium profile and automatically import the resulting Doc2X session.
+
+Parameters:
+
+- `timeoutMs?`
+  - optional positive integer milliseconds
+  - default `300000`
+- `executablePath?`
+  - optional Chrome/Chromium executable path
+- `profileDir?`
+  - optional managed browser profile directory
+- `debugPort?`
+  - optional Chrome DevTools port
+- `notes?`
+  - optional session notes persisted with the imported session
+
+Response format:
+
+- `ok`
+  - whether authentication completed as a successful business result
+- `authenticated`
+  - whether the imported browser session passed real Doc2X API probing
+- `openedBrowser`
+  - whether this invocation had to open a visible browser window
+- `reusedManagedProfile`
+  - whether the tool reused an existing managed profile/browser state instead of requiring a fresh visible login
+- `timedOut`
+  - whether the tool stopped waiting before authentication succeeded
+- `debugBaseUrl`
+  - DevTools endpoint used for the managed browser
+- `profileDir`
+  - managed browser profile directory
+- `pageUrl?`
+  - Doc2X page URL captured from the authenticated browser page
+- `captured?`
+  - same session-capture summary shape used by `doc2x_import_browser_session`
+- `persistedSession?`
+  - final persisted `.doc2x/session.json` summary after successful auth
+- `reason?`
+  - timeout or failure explanation
+- `raw?`
+  - debugging snapshots, including probe details
+
+Recommended interpretation:
+
+- `ok = true` and `authenticated = true`
+  - browser auth succeeded and the MCP session is ready for parse/export calls
+- `ok = false` and `timedOut = true`
+  - the managed browser is still the continuation anchor
+  - finish the login in that browser, then call `doc2x_auth_browser` again
+- `openedBrowser = false` and `reusedManagedProfile = true`
+  - the tool silently reused an existing managed profile/browser state
+
 #### `doc2x_session_get`
 
 Use to inspect current persisted session state.
@@ -108,7 +166,9 @@ Response format:
 
 #### `doc2x_import_browser_session`
 
-Use when the user is already logged into Doc2X in Chrome or Chromium.
+Advanced / maintenance path.
+
+Use when the user is already logged into Doc2X in some separate Chrome or Chromium instance and wants to import that session directly.
 
 Parameters:
 
@@ -150,7 +210,7 @@ Response format:
 
 #### `doc2x_session_set`
 
-Manual fallback when browser session import is unavailable.
+Manual fallback when managed-browser auth and browser-session import are unavailable.
 
 Parameters:
 

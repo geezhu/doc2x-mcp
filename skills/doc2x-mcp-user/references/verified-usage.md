@@ -4,6 +4,7 @@
 
 Primary user tools:
 
+- `doc2x_auth_browser`
 - `doc2x_session_get`
 - `doc2x_import_browser_session`
 - `doc2x_parse_pdf`
@@ -41,12 +42,33 @@ Advanced/raw tools:
   - original Doc2X numeric status
 - `timedOut`
   - MCP stopped waiting before a terminal result
+- `authenticated`
+  - managed-browser auth successfully imported a session and passed a real API probe
+- `openedBrowser`
+  - the auth tool launched a visible browser during this invocation
+- `reusedManagedProfile`
+  - the auth tool reused an existing managed browser profile or running managed browser state
 - `resultMeta`
   - structured enrichment assembled by the MCP after parse completion
 - `raw`
   - raw upstream payload snapshots kept for debugging and auditing
 
 ### Session summary tools
+
+`doc2x_auth_browser` returns:
+
+- `ok`
+- `authenticated`
+- `openedBrowser`
+- `reusedManagedProfile`
+- `timedOut`
+- `debugBaseUrl`
+- `profileDir`
+- `pageUrl?`
+- `captured?`
+- `persistedSession?`
+- `reason?`
+- `raw`
 
 `doc2x_session_get` and `doc2x_session_set` return:
 
@@ -100,6 +122,14 @@ Advanced/raw tools:
 - `warnings`
 
 ## Parse
+
+Recommended authentication flow:
+
+1. Call `doc2x_auth_browser`
+2. Wait for `ok = true` and `authenticated = true`
+3. Use parse / markdown / export tools
+
+Use `doc2x_import_browser_session` only when the user already has some separate logged-in Chrome/Chromium instance that should be imported directly.
 
 Use `doc2x_parse_pdf` for one local PDF.
 

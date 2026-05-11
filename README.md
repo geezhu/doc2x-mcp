@@ -15,6 +15,7 @@ This project is designed around observed public route and bundle metadata from t
 The first version is HTTP-first:
 
 - Reuses imported cookies / bearer tokens
+- Can authenticate through a managed browser profile in one step
 - Can import a live session directly from a Chrome DevTools endpoint
 - Persists session state locally under `.doc2x/session.json`
 - Exposes both high-level tools and raw endpoint calls for uncovered flows
@@ -29,6 +30,7 @@ The first version is HTTP-first:
   - `GetTaskStatus` polling
   - `GetObjectParse`, `GetObjectParseList`, `GetObjectParseResult`, and `GetSpaceObject` enrichment
 - Browser-verified `parseVersion` exposure on `doc2x_parse_pdf` for both verified PDF parser variants
+- One-step managed browser auth with silent reuse, visible-browser fallback, session probe, and local session persistence
 - Parse status recovery by `taskId` or `objectId`
 - Markdown result consumption by `taskId` or `objectId`, including optional local `.md` export
 - Browser-verified web export flow for the currently confirmed formats:
@@ -52,6 +54,7 @@ The first version is HTTP-first:
 ## Tools
 
 - `doc2x_surface_catalog`
+- `doc2x_auth_browser`
 - `doc2x_session_get`
 - `doc2x_session_set`
 - `doc2x_import_browser_session`
@@ -74,19 +77,27 @@ The first version is HTTP-first:
 
 ## Session Strategy
 
-The server is HTTP-first and works best when you import a real browser session:
+The server is HTTP-first and now has a recommended one-step browser-auth path.
 
-1. Launch Chrome or Chromium with a DevTools remote debugging port.
-2. Log into Doc2X in that browser profile.
-3. Call `doc2x_import_browser_session`.
-4. Use the structured tools or `doc2x_request`.
+Recommended path:
 
-Manual fallback:
+1. Call `doc2x_auth_browser`.
+2. The tool first tries silent reuse of the managed browser profile.
+3. If silent reuse does not produce a valid authenticated session, it opens a visible Chrome/Chromium window for manual Doc2X login.
+4. The tool automatically imports `cookie + bearer token + refresh token + default headers`.
+5. The tool probes the real Doc2X account APIs and only persists the session if probing succeeds.
 
-1. Log into Doc2X in a browser if needed.
-2. Copy the cookie header or capture the relevant bearer token.
-3. Call `doc2x_session_set`.
-4. Use the structured tools or `doc2x_request`.
+Key verified behavior:
+
+- A managed browser profile is kept as a long-lived authentication anchor.
+- Successful browser auth rewrites `.doc2x/session.json` with `clearExisting = true`.
+- If login is not completed before timeout, the tool returns `timedOut = true` and the same tool can be called again to continue.
+- If a running managed browser is already available and `debugPort` is known, `doc2x_auth_browser` can attach to that endpoint directly without opening a new window.
+
+Advanced / maintenance paths:
+
+1. If the user already has some separate logged-in Chrome or Chromium instance, call `doc2x_import_browser_session`.
+2. If no browser import is possible, copy the cookie header or capture the relevant bearer token and call `doc2x_session_set`.
 
 Session data is persisted to `.doc2x/session.json`.
 
@@ -222,8 +233,14 @@ npm run build
 npm run verify:mcp
 ```
 
-Online verification, including a real account bundle probe and one local PDF parse run:
+Online verification, including managed-browser auth reuse, a real account bundle probe, and one local PDF parse run:
 
 ```bash
 npm run verify:mcp -- --online --pdf /abs/path/to/file.pdf
+```
+
+Optional verifier argument when the managed browser profile lives somewhere non-default:
+
+```bash
+npm run verify:mcp -- --online --pdf /abs/path/to/file.pdf --browser-profile /abs/path/to/profile
 ```

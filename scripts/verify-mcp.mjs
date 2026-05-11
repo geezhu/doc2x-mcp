@@ -14,7 +14,8 @@ const REQUIRED_TOOLS = [
   "doc2x_request",
   "doc2x_parse_pdf",
   "doc2x_get_parse_status",
-  "doc2x_get_parse_markdown"
+  "doc2x_get_parse_markdown",
+  "doc2x_export_parse_result"
 ];
 
 function parseArgs(argv) {
@@ -74,6 +75,16 @@ function getArray(value, label) {
   return value;
 }
 
+function getNested(value, path, label) {
+  let current = value;
+  for (const segment of path) {
+    assert.ok(current && typeof current === "object", `${label} must be present`);
+    current = current[segment];
+  }
+  assert.notEqual(current, undefined, `${label} must be present`);
+  return current;
+}
+
 async function callJsonTool(client, name, args = {}) {
   logStep(`Calling ${name}`);
   const result = await client.callTool({
@@ -81,6 +92,14 @@ async function callJsonTool(client, name, args = {}) {
     arguments: args
   });
   return parseToolResult(result);
+}
+
+async function callToolRaw(client, name, args = {}) {
+  logStep(`Calling ${name}`);
+  return client.callTool({
+    name,
+    arguments: args
+  });
 }
 
 async function main() {
@@ -144,14 +163,60 @@ async function main() {
       const subscription = getObject(accountBundle.subscription, "account bundle subscription");
       assert.equal(subscription.ok, true, "subscription request should succeed");
 
+      const invalidParseVersionCall = await callToolRaw(client, "doc2x_parse_pdf", {
+        filePath: "/tmp/does-not-matter.pdf",
+        parseVersion: 2
+      });
+      assert.equal(
+        invalidParseVersionCall.isError,
+        true,
+        "parse tool should reject unsupported parseVersion values"
+      );
+
       if (args.pdfPath) {
-        const parseResult = await callJsonTool(client, "doc2x_parse_pdf", {
-          filePath: args.pdfPath,
-          timeoutMs: 180000
-        });
-        assert.equal(parseResult.ok, true, "parse tool should succeed");
-        assert.equal(parseResult.status, "success", "parse tool should reach success status");
-        assert.equal(typeof parseResult.taskId, "string", "parse result should include taskId");
+        const parseCases = [
+          {
+            parseVersion: 0,
+            expectedParseParamVersion: 0
+          },
+          {
+            parseVersion: 3,
+            expectedParseParamVersion: 3
+          }
+        ];
+
+        let parseResult = null;
+        for (const parseCase of parseCases) {
+          const currentParseResult = await callJsonTool(client, "doc2x_parse_pdf", {
+            filePath: args.pdfPath,
+            timeoutMs: 180000,
+            parseVersion: parseCase.parseVersion
+          });
+          assert.equal(currentParseResult.ok, true, `parseVersion=${parseCase.parseVersion} parse should succeed`);
+          assert.equal(
+            currentParseResult.status,
+            "success",
+            `parseVersion=${parseCase.parseVersion} parse should reach success status`
+          );
+          assert.equal(typeof currentParseResult.taskId, "string", "parse result should include taskId");
+          assert.equal(
+            currentParseResult.parseVersion,
+            parseCase.parseVersion,
+            `parseVersion=${parseCase.parseVersion} parse should echo requested parseVersion`
+          );
+
+          const parseListEntry = getObject(
+            getNested(currentParseResult, ["resultMeta", "parseListEntry"], "parse result parseListEntry"),
+            "parse result parseListEntry"
+          );
+          const parseParam = getObject(parseListEntry.parse_param, "parse result parse_param");
+          assert.equal(
+            parseParam.parse_version,
+            parseCase.expectedParseParamVersion,
+            `parseVersion=${parseCase.parseVersion} should match upstream parse_param.parse_version`
+          );
+          parseResult = currentParseResult;
+        }
 
         const statusResult = await callJsonTool(client, "doc2x_get_parse_status", {
           taskId: parseResult.taskId
@@ -181,6 +246,64 @@ async function main() {
           markdownResult.markdown,
           "written markdown should match returned markdown exactly"
         );
+
+        const exportCases = [
+          {
+            exportFormat: "markdown",
+            outputPath: "/tmp/doc2x-verify-export.zip",
+            contentType: "application/zip"
+          },
+          {
+            exportFormat: "latex",
+            outputPath: "/tmp/doc2x-verify-export-latex.zip",
+            contentType: "application/zip"
+          },
+          {
+            exportFormat: "word",
+            outputPath: "/tmp/doc2x-verify-export-word.docx",
+            contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          }
+        ];
+
+        for (const exportCase of exportCases) {
+          await rm(exportCase.outputPath, {
+            force: true
+          });
+          const exportResult = await callJsonTool(client, "doc2x_export_parse_result", {
+            taskId: parseResult.taskId,
+            exportFormat: exportCase.exportFormat,
+            outputPath: exportCase.outputPath
+          });
+          assert.equal(exportResult.ok, true, `${exportCase.exportFormat} export should succeed`);
+          assert.equal(exportResult.status, "success", `${exportCase.exportFormat} export should reach success status`);
+          assert.equal(
+            exportResult.exportFormat,
+            exportCase.exportFormat,
+            `${exportCase.exportFormat} export should report its format`
+          );
+          assert.equal(exportResult.wroteFile, true, `${exportCase.exportFormat} export should write the output file`);
+          assert.equal(
+            exportResult.outputPath,
+            exportCase.outputPath,
+            `${exportCase.exportFormat} export should echo outputPath`
+          );
+          assert.equal(
+            exportResult.contentType,
+            exportCase.contentType,
+            `${exportCase.exportFormat} export should report verified content type`
+          );
+          assert.equal(typeof exportResult.downloadUrl, "string", `${exportCase.exportFormat} export should return downloadUrl`);
+          assert.ok(exportResult.downloadUrl.length > 0, `${exportCase.exportFormat} downloadUrl should not be empty`);
+          const writtenExport = await readFile(exportCase.outputPath);
+          assert.ok(writtenExport.length > 0, `${exportCase.exportFormat} artifact should not be empty`);
+          assert.equal(writtenExport[0], 0x50, `${exportCase.exportFormat} artifact should start with PK`);
+          assert.equal(writtenExport[1], 0x4b, `${exportCase.exportFormat} artifact should start with PK`);
+          assert.equal(
+            exportResult.byteLength,
+            writtenExport.length,
+            `${exportCase.exportFormat} byteLength should match written file size`
+          );
+        }
       } else {
         logStep("Skipping online parse check because no --pdf argument was provided");
       }

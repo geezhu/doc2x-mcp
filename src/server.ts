@@ -25,6 +25,9 @@ import {
 import { importBrowserSession } from "./doc2x/browserSession.js";
 import { getBrowserFallbackPlan } from "./doc2x/browserFallback.js";
 import {
+  DOC2X_EXPORT_FORMAT,
+  DOC2X_PARSE_VERSION,
+  exportParseResultViaHttp,
   getParseMarkdownViaHttp,
   getParseStatusViaHttp,
   parsePdfViaHttp
@@ -319,14 +322,21 @@ export function createServer(client = new Doc2xClient()): McpServer {
         "Parse a single local PDF through the Doc2X web subscription flow using pure HTTP, waiting until the task finishes or times out.",
       inputSchema: {
         filePath: z.string(),
-        timeoutMs: z.number().int().positive().optional()
+        timeoutMs: z.number().int().positive().optional(),
+        parseVersion: z
+          .union([
+            z.literal(DOC2X_PARSE_VERSION.doc2xV2_2410),
+            z.literal(DOC2X_PARSE_VERSION.doc2xV3_2509)
+          ])
+          .optional()
       }
     },
-    async ({ filePath, timeoutMs }) =>
+    async ({ filePath, timeoutMs, parseVersion }) =>
       withToolErrorHandling("Doc2X parse PDF", async () => {
         return parsePdfViaHttp(client, {
           filePath,
-          timeoutMs
+          timeoutMs,
+          parseVersion
         });
       })
   );
@@ -366,6 +376,35 @@ export function createServer(client = new Doc2xClient()): McpServer {
         return getParseMarkdownViaHttp(client, {
           taskId,
           objectId,
+          outputPath
+        });
+      })
+  );
+
+  server.registerTool(
+    "doc2x_export_parse_result",
+    {
+      description:
+        "Run the verified web export flow for a completed parse task or object, poll the convert task, and download the final artifact to a local absolute output path.",
+      inputSchema: {
+        taskId: z.string().optional(),
+        objectId: z.string().optional(),
+        exportFormat: z
+          .enum([
+            DOC2X_EXPORT_FORMAT.markdown,
+            DOC2X_EXPORT_FORMAT.latex,
+            DOC2X_EXPORT_FORMAT.word
+          ])
+          .optional(),
+        outputPath: z.string()
+      }
+    },
+    async ({ taskId, objectId, exportFormat, outputPath }) =>
+      withToolErrorHandling("Doc2X export parse result", async () => {
+        return exportParseResultViaHttp(client, {
+          taskId,
+          objectId,
+          exportFormat,
           outputPath
         });
       })

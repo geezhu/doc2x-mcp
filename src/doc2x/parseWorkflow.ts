@@ -32,7 +32,14 @@ export const DOC2X_PARSE_VERSION = {
 
 export const DEFAULT_PARSE_VERSION = DOC2X_PARSE_VERSION.doc2xV3_2509;
 
+export const DOC2X_EXPORT_FORMAT = {
+  markdown: "markdown",
+  latex: "latex",
+  word: "word"
+} as const;
+
 export type NormalizedTaskStatus = "unknown" | "none" | "pending" | "success" | "failed";
+export type Doc2xExportFormat = (typeof DOC2X_EXPORT_FORMAT)[keyof typeof DOC2X_EXPORT_FORMAT];
 
 export interface Doc2xParseWorkflowResult {
   ok: boolean;
@@ -92,6 +99,63 @@ export interface Doc2xParseMarkdownResult {
   warnings: string[];
   raw: Record<string, unknown>;
 }
+
+export interface Doc2xExportParseResult {
+  ok: boolean;
+  taskId?: string;
+  parseId?: string;
+  objectId?: string;
+  exportTaskId?: string;
+  exportFormat: Doc2xExportFormat;
+  status: NormalizedTaskStatus;
+  rawStatus?: number;
+  progress?: number;
+  timedOut: boolean;
+  reason?: string;
+  outputPath: string;
+  wroteFile: boolean;
+  downloadUrl?: string;
+  contentType?: string;
+  byteLength?: number;
+  warnings: string[];
+  raw: Record<string, unknown>;
+}
+
+interface VerifiedExportConfig {
+  convertTo: number;
+  formulaMode: string;
+  formulaLevel: number;
+  mergeCrossPageForms: boolean;
+  artifactContentType: string;
+  artifactExtension: string;
+}
+
+const VERIFIED_EXPORT_CONFIGS: Record<Doc2xExportFormat, VerifiedExportConfig> = {
+  [DOC2X_EXPORT_FORMAT.markdown]: {
+    convertTo: 1,
+    formulaMode: "normal",
+    formulaLevel: 0,
+    mergeCrossPageForms: false,
+    artifactContentType: "application/zip",
+    artifactExtension: ".zip"
+  },
+  [DOC2X_EXPORT_FORMAT.latex]: {
+    convertTo: 2,
+    formulaMode: "normal",
+    formulaLevel: 0,
+    mergeCrossPageForms: false,
+    artifactContentType: "application/zip",
+    artifactExtension: ".zip"
+  },
+  [DOC2X_EXPORT_FORMAT.word]: {
+    convertTo: 3,
+    formulaMode: "normal",
+    formulaLevel: 0,
+    mergeCrossPageForms: false,
+    artifactContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    artifactExtension: ".docx"
+  }
+};
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -366,6 +430,85 @@ function toMarkdownSuccessResult(input: {
   };
 }
 
+function toExportFailureResult(input: {
+  taskId?: string;
+  parseId?: string;
+  objectId?: string;
+  exportTaskId?: string;
+  exportFormat: Doc2xExportFormat;
+  status?: NormalizedTaskStatus;
+  rawStatus?: number;
+  progress?: number;
+  reason: string;
+  timedOut?: boolean;
+  outputPath: string;
+  wroteFile?: boolean;
+  downloadUrl?: string;
+  contentType?: string;
+  byteLength?: number;
+  warnings?: string[];
+  raw: Record<string, unknown>;
+}): Doc2xExportParseResult {
+  return {
+    ok: false,
+    taskId: input.taskId,
+    parseId: input.parseId,
+    objectId: input.objectId,
+    exportTaskId: input.exportTaskId,
+    exportFormat: input.exportFormat,
+    status: input.status ?? "unknown",
+    rawStatus: input.rawStatus,
+    progress: input.progress,
+    timedOut: input.timedOut ?? false,
+    reason: input.reason,
+    outputPath: input.outputPath,
+    wroteFile: input.wroteFile ?? false,
+    downloadUrl: input.downloadUrl,
+    contentType: input.contentType,
+    byteLength: input.byteLength,
+    warnings: input.warnings ?? [],
+    raw: input.raw
+  };
+}
+
+function toExportSuccessResult(input: {
+  taskId?: string;
+  parseId?: string;
+  objectId?: string;
+  exportTaskId?: string;
+  exportFormat: Doc2xExportFormat;
+  status?: NormalizedTaskStatus;
+  rawStatus?: number;
+  progress?: number;
+  outputPath: string;
+  wroteFile: boolean;
+  downloadUrl: string;
+  contentType?: string;
+  byteLength?: number;
+  warnings?: string[];
+  raw: Record<string, unknown>;
+}): Doc2xExportParseResult {
+  return {
+    ok: true,
+    taskId: input.taskId,
+    parseId: input.parseId,
+    objectId: input.objectId,
+    exportTaskId: input.exportTaskId,
+    exportFormat: input.exportFormat,
+    status: input.status ?? "success",
+    rawStatus: input.rawStatus,
+    progress: input.progress,
+    timedOut: false,
+    outputPath: input.outputPath,
+    wroteFile: input.wroteFile,
+    downloadUrl: input.downloadUrl,
+    contentType: input.contentType,
+    byteLength: input.byteLength,
+    warnings: input.warnings ?? [],
+    raw: input.raw
+  };
+}
+
 function serializeError(error: unknown): Record<string, unknown> {
   if (error instanceof Doc2xHttpError) {
     return {
@@ -598,6 +741,23 @@ function extractObjectIdFromSpaceObject(snapshot: ResponseSnapshot): string | un
 
 function extractParseResultData(snapshot: ResponseSnapshot): Record<string, unknown> | undefined {
   return getGatewayData(snapshot) ?? getGatewayBody(snapshot);
+}
+
+function extractConvertDownloadUrl(snapshot: ResponseSnapshot): string | undefined {
+  return firstString(snapshot.body, [["data", "url"], ["url"]]);
+}
+
+function summarizeBinaryBody(body: unknown): Record<string, unknown> | unknown {
+  const bodyRecord = asRecord(body);
+  if (!bodyRecord) {
+    return body;
+  }
+
+  return {
+    byteLength: typeof bodyRecord.byteLength === "number" ? bodyRecord.byteLength : undefined,
+    contentType: typeof bodyRecord.contentType === "string" ? bodyRecord.contentType : undefined,
+    hasBase64: typeof bodyRecord.base64 === "string"
+  };
 }
 
 async function assertLocalPdf(filePath: string): Promise<{ filePath: string; fileName: string }> {
@@ -1365,6 +1525,355 @@ export async function getParseMarkdownViaHttp(
     outputPath: input.outputPath,
     wroteFile,
     warnings: normalizedWarnings,
+    raw
+  });
+}
+
+export async function exportParseResultViaHttp(
+  client: Doc2xClient,
+  input: {
+    taskId?: string;
+    objectId?: string;
+    outputPath: string;
+    exportFormat?: Doc2xExportFormat;
+  }
+): Promise<Doc2xExportParseResult> {
+  if (!input.taskId && !input.objectId) {
+    throw new Error("taskId or objectId is required");
+  }
+
+  if (!path.isAbsolute(input.outputPath)) {
+    throw new Error("outputPath must be an absolute path");
+  }
+
+  const exportFormat = input.exportFormat ?? DOC2X_EXPORT_FORMAT.markdown;
+  const exportConfig = VERIFIED_EXPORT_CONFIGS[exportFormat];
+  if (!exportConfig) {
+    throw new Error(`Unsupported export format: ${exportFormat}`);
+  }
+
+  if (path.extname(input.outputPath).toLowerCase() !== exportConfig.artifactExtension) {
+    throw new Error(
+      `${exportFormat} export currently downloads a ${exportConfig.artifactExtension} package; outputPath must use ${exportConfig.artifactExtension}`
+    );
+  }
+
+  const raw: Record<string, unknown> = {};
+  const warnings: string[] = [];
+  let parseId = input.taskId;
+  let objectId = input.objectId;
+  let taskStatus: ParsedTaskStatus = {
+    status: "unknown"
+  };
+
+  if (input.taskId) {
+    const taskStatusSnapshot = await client.taskOperation("getTaskStatus", {
+      outputId: input.taskId,
+      output_id: input.taskId
+    });
+    raw.taskStatus = taskStatusSnapshot;
+    taskStatus = parseTaskStatus(taskStatusSnapshot);
+
+    if (!gatewayIndicatesSuccess(taskStatusSnapshot)) {
+      return toExportFailureResult({
+        taskId: input.taskId,
+        parseId,
+        objectId,
+        exportFormat,
+        status: taskStatus.status,
+        rawStatus: taskStatus.rawStatus,
+        progress: taskStatus.progress,
+        reason: taskStatus.reason ?? "GetTaskStatus returned ok=false",
+        outputPath: input.outputPath,
+        warnings,
+        raw
+      });
+    }
+
+    if (taskStatus.status !== "success") {
+      return toExportFailureResult({
+        taskId: input.taskId,
+        parseId,
+        objectId,
+        exportFormat,
+        status: taskStatus.status,
+        rawStatus: taskStatus.rawStatus,
+        progress: taskStatus.progress,
+        reason:
+          taskStatus.status === "failed"
+            ? taskStatus.reason ?? "Parse task is failed"
+            : "Parse task is not complete yet",
+        outputPath: input.outputPath,
+        warnings,
+        raw
+      });
+    }
+  }
+
+  const artifacts = await enrichParseArtifacts(client, {
+    taskId: input.taskId,
+    parseId,
+    objectId
+  });
+  Object.assign(raw, artifacts.raw);
+  warnings.push(...(artifacts.warnings ?? []));
+  parseId = artifacts.parseId ?? parseId;
+  objectId = artifacts.objectId ?? objectId;
+
+  if (input.taskId && input.objectId && objectId && objectId !== input.objectId) {
+    warnings.push(`taskId/objectId mismatch detected: requested ${input.objectId}, resolved ${objectId}`);
+    return toExportFailureResult({
+      taskId: input.taskId,
+      parseId,
+      objectId,
+      exportFormat,
+      status: taskStatus.status,
+      rawStatus: taskStatus.rawStatus,
+      progress: taskStatus.progress,
+      reason: `taskId ${input.taskId} does not resolve to objectId ${input.objectId}`,
+      outputPath: input.outputPath,
+      warnings: uniqueWarnings(warnings),
+      raw
+    });
+  }
+
+  if (!parseId) {
+    return toExportFailureResult({
+      taskId: input.taskId,
+      objectId,
+      exportFormat,
+      status: input.taskId ? taskStatus.status : "unknown",
+      rawStatus: taskStatus.rawStatus,
+      progress: taskStatus.progress,
+      reason:
+        input.objectId && !artifacts.parseResultData
+          ? `No parse result found for objectId ${input.objectId}`
+          : "Parse metadata is not available yet",
+      outputPath: input.outputPath,
+      warnings: uniqueWarnings(warnings),
+      raw
+    });
+  }
+
+  const createConvertPayload = {
+    parseId,
+    parse_id: parseId,
+    formulaMode: exportConfig.formulaMode,
+    formula_mode: exportConfig.formulaMode,
+    convertTo: exportConfig.convertTo,
+    convert_to: exportConfig.convertTo,
+    filename: path.basename(input.outputPath, path.extname(input.outputPath)),
+    mergeCrossPageForms: exportConfig.mergeCrossPageForms,
+    merge_cross_page_forms: exportConfig.mergeCrossPageForms,
+    formulaLevel: exportConfig.formulaLevel,
+    formula_level: exportConfig.formulaLevel
+  };
+
+  const createConvertSnapshot = await client.taskOperation("createConvertParseTask", createConvertPayload);
+  raw.createConvertTask = createConvertSnapshot;
+  raw.createConvertPayload = createConvertPayload;
+
+  if (!gatewayIndicatesSuccess(createConvertSnapshot)) {
+    return toExportFailureResult({
+      taskId: input.taskId,
+      parseId,
+      objectId,
+      exportFormat,
+      status: "failed",
+      reason: getGatewayMessage(createConvertSnapshot) ?? "CreateConvertParseTask returned ok=false",
+      outputPath: input.outputPath,
+      warnings: uniqueWarnings(warnings),
+      raw
+    });
+  }
+
+  const exportTaskId = extractOutputId(createConvertSnapshot);
+  if (!exportTaskId) {
+    return toExportFailureResult({
+      taskId: input.taskId,
+      parseId,
+      objectId,
+      exportFormat,
+      status: "failed",
+      reason: "CreateConvertParseTask response did not include outputId",
+      outputPath: input.outputPath,
+      warnings: uniqueWarnings(warnings),
+      raw
+    });
+  }
+
+  const convertTaskPolls: ResponseSnapshot[] = [];
+  raw.convertTaskStatusPolls = convertTaskPolls;
+  let lastConvertStatus: ParsedTaskStatus = {
+    status: "unknown"
+  };
+  let downloadUrl: string | undefined;
+  const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+
+  while (Date.now() <= deadline) {
+    const convertStatusSnapshot = await client.taskOperation("getConvertTaskStatus", {
+      outputId: exportTaskId,
+      output_id: exportTaskId
+    });
+    convertTaskPolls.push(convertStatusSnapshot);
+    lastConvertStatus = parseTaskStatus(convertStatusSnapshot);
+    downloadUrl = extractConvertDownloadUrl(convertStatusSnapshot) ?? downloadUrl;
+
+    if (!gatewayIndicatesSuccess(convertStatusSnapshot)) {
+      return toExportFailureResult({
+        taskId: input.taskId,
+        parseId,
+        objectId,
+        exportTaskId,
+        exportFormat,
+        status: lastConvertStatus.status,
+        rawStatus: lastConvertStatus.rawStatus,
+        progress: lastConvertStatus.progress,
+        reason: lastConvertStatus.reason ?? "GetConvertTaskStatus returned ok=false",
+        outputPath: input.outputPath,
+        downloadUrl,
+        warnings: uniqueWarnings(warnings),
+        raw
+      });
+    }
+
+    if (lastConvertStatus.status === "success") {
+      break;
+    }
+
+    if (lastConvertStatus.status === "failed") {
+      return toExportFailureResult({
+        taskId: input.taskId,
+        parseId,
+        objectId,
+        exportTaskId,
+        exportFormat,
+        status: lastConvertStatus.status,
+        rawStatus: lastConvertStatus.rawStatus,
+        progress: lastConvertStatus.progress,
+        reason: lastConvertStatus.reason ?? "Convert task reached failed status",
+        outputPath: input.outputPath,
+        downloadUrl,
+        warnings: uniqueWarnings(warnings),
+        raw
+      });
+    }
+
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  if (lastConvertStatus.status !== "success" || !downloadUrl) {
+    return toExportFailureResult({
+      taskId: input.taskId,
+      parseId,
+      objectId,
+      exportTaskId,
+      exportFormat,
+      status: lastConvertStatus.status,
+      rawStatus: lastConvertStatus.rawStatus,
+      progress: lastConvertStatus.progress,
+      timedOut: true,
+      reason:
+        lastConvertStatus.status === "success"
+          ? "Convert task finished without a download URL"
+          : `Convert task did not reach a terminal state within ${DEFAULT_TIMEOUT_MS}ms`,
+      outputPath: input.outputPath,
+      downloadUrl,
+      warnings: uniqueWarnings(warnings),
+      raw
+    });
+  }
+
+  const downloadSnapshot = await client.request({
+    target: "absolute",
+    absoluteUrl: downloadUrl,
+    method: "GET",
+    responseType: "base64",
+    includeSessionAuth: false,
+    includeSessionCookies: false,
+    allowRefresh: false
+  });
+  raw.download = {
+    ...downloadSnapshot,
+    body: summarizeBinaryBody(downloadSnapshot.body)
+  };
+
+  const binaryBody = asRecord(downloadSnapshot.body);
+  const base64Payload = typeof binaryBody?.base64 === "string" ? binaryBody.base64 : undefined;
+  const byteLength = typeof binaryBody?.byteLength === "number" ? binaryBody.byteLength : undefined;
+  const contentType =
+    typeof binaryBody?.contentType === "string" ? binaryBody.contentType : exportConfig.artifactContentType;
+
+  if (!base64Payload) {
+    return toExportFailureResult({
+      taskId: input.taskId,
+      parseId,
+      objectId,
+      exportTaskId,
+      exportFormat,
+      status: "failed",
+      rawStatus: lastConvertStatus.rawStatus,
+      progress: lastConvertStatus.progress,
+      reason: "Download response did not include a base64 payload",
+      outputPath: input.outputPath,
+      downloadUrl,
+      contentType,
+      byteLength,
+      warnings: uniqueWarnings(warnings),
+      raw
+    });
+  }
+
+  let wroteFile = false;
+  try {
+    await mkdir(path.dirname(input.outputPath), {
+      recursive: true
+    });
+    await writeFile(input.outputPath, Buffer.from(base64Payload, "base64"), {
+      flag: "wx"
+    });
+    wroteFile = true;
+  } catch (error) {
+    const ioError = error as NodeJS.ErrnoException;
+    if (ioError?.code === "EEXIST") {
+      return toExportFailureResult({
+        taskId: input.taskId,
+        parseId,
+        objectId,
+        exportTaskId,
+        exportFormat,
+        status: "success",
+        rawStatus: lastConvertStatus.rawStatus,
+        progress: lastConvertStatus.progress,
+        reason: `Output path already exists: ${input.outputPath}`,
+        outputPath: input.outputPath,
+        wroteFile: false,
+        downloadUrl,
+        contentType,
+        byteLength,
+        warnings: uniqueWarnings(warnings),
+        raw
+      });
+    }
+
+    throw error;
+  }
+
+  return toExportSuccessResult({
+    taskId: input.taskId,
+    parseId,
+    objectId,
+    exportTaskId,
+    exportFormat,
+    status: lastConvertStatus.status,
+    rawStatus: lastConvertStatus.rawStatus,
+    progress: lastConvertStatus.progress,
+    outputPath: input.outputPath,
+    wroteFile,
+    downloadUrl,
+    contentType,
+    byteLength,
+    warnings: uniqueWarnings(warnings),
     raw
   });
 }

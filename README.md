@@ -14,6 +14,63 @@ npm run check
 npm run build
 ```
 
+## MCP 配置
+
+这个项目是一个 `stdio` 型 MCP Server。大多数 MCP Client 都需要你提供：
+
+- 启动命令
+- 参数
+- 项目工作目录 `cwd`
+
+推荐使用构建后的入口：
+
+```json
+{
+  "mcpServers": {
+    "doc2x": {
+      "command": "node",
+      "args": [
+        "/abs/path/to/doc2x/dist/index.js"
+      ],
+      "cwd": "/abs/path/to/doc2x"
+    }
+  }
+}
+```
+
+如果你在开发中希望直接跑 TypeScript，也可以这样配：
+
+```json
+{
+  "mcpServers": {
+    "doc2x": {
+      "command": "npm",
+      "args": [
+        "run",
+        "dev"
+      ],
+      "cwd": "/abs/path/to/doc2x"
+    }
+  }
+}
+```
+
+建议优先使用构建后的 `dist/index.js`，稳定性更好。
+
+配置时有两个路径概念要注意：
+
+- `cwd` 会影响会话文件位置
+  - 当前默认写到 `<cwd>/.doc2x/session.json`
+- 受管浏览器 profile 默认在用户目录下
+  - `~/.doc2x-mcp/managed-browser-profile`
+
+项目启动后，再通过 MCP 工具完成登录和使用：
+
+1. 调用 `doc2x_auth_browser`
+2. 调用 `doc2x_parse_pdf`
+3. 调用 `doc2x_get_parse_markdown`
+4. 按需调用 `doc2x_export_parse_result`
+
 本地启动 MCP Server：
 
 ```bash

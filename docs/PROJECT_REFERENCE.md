@@ -16,6 +16,77 @@
 - 会话默认持久化到 `.doc2x/session.json`
 - 对未正式封装的能力保留原语/调试工具
 
+## MCP 配置方式
+
+这个项目通过 `stdio` 暴露 MCP 服务，入口文件是：
+
+- `dist/index.js`
+
+也就是说，MCP Client 需要把它作为一个子进程启动，并通过标准输入输出与它通信。
+
+推荐配置：
+
+```json
+{
+  "mcpServers": {
+    "doc2x": {
+      "command": "node",
+      "args": [
+        "/abs/path/to/doc2x/dist/index.js"
+      ],
+      "cwd": "/abs/path/to/doc2x"
+    }
+  }
+}
+```
+
+开发态配置：
+
+```json
+{
+  "mcpServers": {
+    "doc2x": {
+      "command": "npm",
+      "args": [
+        "run",
+        "dev"
+      ],
+      "cwd": "/abs/path/to/doc2x"
+    }
+  }
+}
+```
+
+### 为什么 `cwd` 很重要
+
+当前本项目的会话文件默认路径不是用户目录固定值，而是基于进程工作目录：
+
+- `<cwd>/.doc2x/session.json`
+
+因此如果：
+
+- 你改了 `cwd`
+- 或不同客户端使用了不同的 `cwd`
+
+那么它们看到的本地会话文件也会不同。
+
+### 认证相关目录
+
+除了会话文件外，一步式浏览器认证还有一套默认受管浏览器目录，位于用户目录下：
+
+- `~/.doc2x-mcp/managed-browser-profile`
+
+这一路径与 `cwd` 无关，主要供 `doc2x_auth_browser` 复用浏览器登录态。
+
+### 推荐初始化顺序
+
+完成 MCP 配置并启动后，推荐按下面顺序使用：
+
+1. `doc2x_auth_browser`
+2. `doc2x_parse_pdf`
+3. `doc2x_get_parse_markdown`
+4. `doc2x_export_parse_result`
+
 ## 当前覆盖范围
 
 当前已经覆盖：
